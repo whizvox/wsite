@@ -1,0 +1,7 @@
+1.0.0-alpha-1
+
+- Add setup route when first initializing
+- Add basic user creation/deletion
+- Add basic page creation/deletion with syntax selection
+- Add user authentication via logging in and out
+- Add ability to restart/shutdown remotely

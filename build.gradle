@@ -1,0 +1,69 @@
+plugins {
+  id 'java'
+  id 'application'
+  id 'com.github.johnrengelman.shadow' version '4.0.4'
+}
+
+group 'me.whizvox.wsite'
+version '1.0.0-alpha-1'
+
+sourceCompatibility = 1.8
+
+repositories {
+  mavenCentral()
+}
+
+mainClassName = 'me.whizvox.wsite.core.Launcher'
+
+ext {
+  junitVersion = '4.12'
+  jacksonVersion = '2.9.7'
+  jooqVersion = '3.11.5'
+  slf4jVersion = '1.7.25'
+  sqliteVersion = '3.25.2'
+  sparkVersion = '2.8.0'
+  sparkFreemarkerVersion = '2.7.1'
+  owaspVersion = '20181114.1'
+  commonmarkVersion = '0.12.1'
+}
+
+dependencies {
+  testCompile group: 'junit', name: 'junit', version: junitVersion
+  compile group: 'com.fasterxml.jackson.core', name: 'jackson-databind', version: jacksonVersion
+  compile group: 'org.slf4j', name: 'slf4j-simple', version: slf4jVersion
+  compile group: 'org.jooq', name: 'jooq', version: jooqVersion
+  compile group: 'org.xerial', name: 'sqlite-jdbc', version: sqliteVersion
+  compile group: 'com.sparkjava', name: 'spark-core', version: sparkVersion
+  compile group: 'com.sparkjava', name: 'spark-template-freemarker', version: sparkFreemarkerVersion
+  compile group: 'com.googlecode.owasp-java-html-sanitizer', name: 'owasp-java-html-sanitizer', version: owaspVersion
+  compile group: 'com.atlassian.commonmark', name: 'commonmark', version: commonmarkVersion
+}
+
+import org.apache.tools.ant.filters.ReplaceTokens
+
+task prepTokenizedFiles(type: Copy) {
+  from 'src/main/java'
+  into 'build/tokenizedSrc'
+  filter(ReplaceTokens, tokens: [VERSION: project.version, RELEASED: new Date().getTime().toString()])
+}
+
+task compileTokenizedFiles(type: JavaCompile, dependsOn: prepTokenizedFiles) {
+  source = prepTokenizedFiles.destinationDir
+  classpath = sourceSets.main.compileClasspath
+  destinationDir = file('build/tokenizedClasses')
+}
+
+task createFatJar(type: Jar, dependsOn: compileTokenizedFiles) {
+  manifest {
+    attributes 'Main-Class': mainClassName
+  }
+  from compileTokenizedFiles.destinationDir
+}
+
+shadowJar.dependsOn compileTokenizedFiles
+shadowJar {
+  manifest {
+    attributes 'Main-Class': mainClassName
+  }
+  from compileTokenizedFiles.destinationDir
+}
