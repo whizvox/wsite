@@ -1,3 +1,12 @@
+1.0.1-alpha-2
+
+- Site settings are loaded before creation and saved between shutdowns
+- Site, database, SSL, and SMTP settings are remotely configurable outside setup routine
+- Root directory is no longer configurable, now handled by launcher
+- SMTP from address is now configurable
+- Default values are filled in when configuring
+- Most configuration values are checked before applying
+
 1.0.0-alpha-1
 
 - Add setup route when first initializing

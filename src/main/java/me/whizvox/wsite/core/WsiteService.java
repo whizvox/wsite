@@ -12,13 +12,17 @@ import org.jooq.DSLContext;
 import org.jooq.impl.DSL;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import spark.*;
+import spark.ModelAndView;
+import spark.Spark;
+import spark.TemplateEngine;
 import spark.template.freemarker.FreeMarkerEngine;
 
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.nio.CharBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
@@ -28,6 +32,8 @@ import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.temporal.ChronoUnit;
 import java.util.Arrays;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -37,7 +43,7 @@ import java.util.regex.Pattern;
 public class WsiteService implements Runnable {
 
   private WsiteConfiguration config;
-  private WsiteConfiguration newConfig;
+  private Map<String, Object> newConfig;
   private Logger logger;
   private boolean created;
   private Path rootDir;
@@ -54,6 +60,7 @@ public class WsiteService implements Runnable {
   private Pattern passwordPattern;
 
   // TODO: Include SMTP support
+  // TODO: Include SSL support
 
   private boolean shouldRestart;
   private boolean shouldShutdown;
@@ -64,6 +71,8 @@ public class WsiteService implements Runnable {
     created = false;
     shouldRestart = false;
     shouldShutdown = false;
+    eventManager = new EventManager();
+    newConfig = new HashMap<>();
   }
 
   public String getSiteName() {
@@ -72,6 +81,10 @@ public class WsiteService implements Runnable {
 
   public Logger getLogger() {
     return logger;
+  }
+
+  public WsiteConfiguration getConfig() {
+    return config.copy();
   }
 
   public Path resolvePath(String path) {
@@ -362,40 +375,39 @@ public class WsiteService implements Runnable {
     }
     logger.warn("Build released {}", Utils.formatFileSafeString(Reference.RELEASED));
 
-    if (newConfig != null) {
-      logger.warn("A new configuration has been specified");
+    if (!Files.exists(rootDir)) {
+      logger.warn("Creating root directory...");
+      Files.createDirectories(rootDir);
+    }
+    IOUtils.mkdirs(resolvePath(Reference.TEMP_DIR));
 
-      Path newRootDir = Paths.get(newConfig.rootDirectory);
-      if (!Files.isSameFile(rootDir, newRootDir)) {
-        logger.warn("A new root directory has been specified ({}). Will move contents...", newRootDir.toString());
-        Files.move(rootDir, newRootDir);
+    Path configFile = resolvePath(Reference.CONFIG_FILE);
+    if (Files.exists(configFile)) {
+      try (InputStream in = Files.newInputStream(configFile)) {
+        config = IOUtils.readJson(in, WsiteConfiguration.class);
       }
-
-      config = newConfig;
-      newConfig = null;
     }
 
-    rootDir = Paths.get(config.rootDirectory).toAbsolutePath().normalize();
-    if (Reference.usingDevBuild()) {
-      rootDir = rootDir.resolve("rundir");
+    if (!newConfig.isEmpty()) {
+      logger.warn("A new configuration has been specified");
+      config.loadFromMap(newConfig);
+      newConfig.clear();
     }
-    Files.createDirectories(rootDir);
 
     logger.info("Connecting to SQL database...");
     if (Utils.isNullOrEmpty(config.databaseUrl)) {
       throw new IllegalArgumentException("Database URL must be specified");
     }
-    String oldUrl = config.databaseUrl;
-    config.databaseUrl = config.databaseUrl.replace("${ROOT}", rootDir.toString());
-    if (!oldUrl.equals(config.databaseUrl)) {
+    String resolvedDatabaseUrl = config.databaseUrl.replace("${ROOT}", rootDir.toString());
+    if (!resolvedDatabaseUrl.equals(config.databaseUrl)) {
       logger.info("Database URL path has been resolved");
     }
     if (config.databaseProperties != null) {
-      conn = DriverManager.getConnection(config.databaseUrl, config.databaseProperties);
+      conn = DriverManager.getConnection(resolvedDatabaseUrl, config.databaseProperties);
     } else if (config.databaseUsername != null && config.databasePassword != null) {
-      conn = DriverManager.getConnection(config.databaseUrl, config.databaseUsername, config.databasePassword);
+      conn = DriverManager.getConnection(resolvedDatabaseUrl, config.databaseUsername, config.databasePassword);
     } else {
-      conn = DriverManager.getConnection(config.databaseUrl);
+      conn = DriverManager.getConnection(resolvedDatabaseUrl);
     }
     dslContext = DSL.using(conn);
 
@@ -406,6 +418,10 @@ public class WsiteService implements Runnable {
     userRepo.create();
     pageRepo.create();
     loginRepo.create();
+
+    logger.info("Compiling username and password requirement patterns...");
+    usernamePattern = Pattern.compile(config.usernamePattern);
+    passwordPattern = Pattern.compile(config.passwordPattern);
 
     logger.info("Initializing scheduled executor service...");
     scheduledExecutorService = Executors.newSingleThreadScheduledExecutor();
@@ -465,41 +481,37 @@ public class WsiteService implements Runnable {
       Spark.post("/control/newUser", new Routes.NewUserPostRoute(this));
       Spark.get("/control/deleteUser", new Routes.DeleteUserGetRoute(this));
       Spark.post("/control/deleteUser", new Routes.DeleteUserPostRoute(this));
+      Spark.get("/control/configSite", new Routes.ConfigSiteGetRoute(this));
+      Spark.post("/control/configSite", new Routes.ConfigSitePostRoute(this));
+      Spark.get("/control/configDatabase", new Routes.ConfigDatabaseGetRoute(this));
+      Spark.post("/control/configDatabase", new Routes.ConfigDatabasePostRoute(this));
+      Spark.get("/control/configSsl", new Routes.ConfigSslGetRoute(this));
+      Spark.post("/control/configSsl", new Routes.ConfigSslPostRoute(this));
+      Spark.get("/control/configSmtp", new Routes.ConfigSmtpGetRoute(this));
+      Spark.post("/control/configSmtp", new Routes.ConfigSmtpPostRoute(this));
       Spark.get("/veryimportant/teapot", new Routes.TeapotRoute(this));
       Spark.get("/:pagePath", new Routes.PageGetRoute(this));
     } else {
-      /*Path initialUserPath = resolvePath("initialUser.json");
-      if (!Files.exists(initialUserPath)) {
-        throw new FileNotFoundException("Cannot start server without initialUser.json");
-      }
-      try (InputStream in = Files.newInputStream(initialUserPath)) {
-        User user = IOUtils.readJson(in, User.class);
-        WsiteResult result = createNewUser(user.username, user.emailAddress, user.password.toCharArray(), true);
-        if (result != WsiteResult.SUCCESS) {
-          throw new RuntimeException("Could not create initial user: " + result);
-        }
-      } catch (IOException e) {
-        throw new RuntimeException("Could not read from initialUser.json", e);
-      }
-      Path setupPath = resolvePath("setup.json");
-      if (Files.exists(setupPath)) {
-        try (InputStream in = Files.newInputStream(setupPath)) {
-          WsiteConfiguration setupConfig = IOUtils.readJson(in, WsiteConfiguration.class);
-          restartWithNewConfiguration(setupConfig);
-        } catch (IOException e) {
-          throw new RuntimeException("Could not read setup.json", e);
-        }
-      } else {*/
-        logger.warn("No setup file found. Will instead add setup route...");
-        Spark.get("/", new Routes.SetupGetRoute(this));
-        Spark.post("/", new Routes.SetupPostRoute(this));
-      //}
+      // TODO: Include some sort of system where a setup file can instead be used
+      logger.warn("No users found. Will instead add setup route...");
+      Spark.get("/", new Routes.SetupGetRoute(this));
+      Spark.post("/", new Routes.SetupPostRoute(this));
     }
+
+    save();
 
     created = true;
     postEvent(new WsiteEvent.Create(this));
 
     logger.info("Wsite service has successfully been created");
+  }
+
+  public void save() throws IOException {
+    logger.info("Saving settings...");
+    Path configFile = resolvePath(Reference.CONFIG_FILE);
+    try (OutputStream out = Files.newOutputStream(configFile)) {
+      IOUtils.writeJson(out, config);
+    }
   }
 
   public void tick() {
@@ -524,6 +536,9 @@ public class WsiteService implements Runnable {
       logger.info("Clearing event manager...");
       eventManager.dropAllListeners();
     }
+
+    logger.info("Saving settings...");
+    save();
 
     if (conn != null) {
       logger.info("Closing repositories...");
@@ -553,8 +568,8 @@ public class WsiteService implements Runnable {
     scheduledExecutorService.schedule(() -> shouldRestart = true, 1, TimeUnit.SECONDS);
   }
 
-  public void restartWithNewConfiguration(WsiteConfiguration config) {
-    newConfig = config;
+  public void restartWithNewConfiguration(Map<String, Object> config) {
+    newConfig.putAll(config);
     restart();
   }
 
@@ -574,9 +589,9 @@ public class WsiteService implements Runnable {
     while (run) {
       tick();
       try {
-        Thread.sleep(100);
+        Thread.sleep(Reference.TICK_DELAY);
       } catch (InterruptedException e) {
-        logger.error("Sleep was interrupted", e);
+        logger.error("Tick delay was interrupted", e);
       }
       if (shouldRestart) {
         try {
@@ -609,6 +624,7 @@ public class WsiteService implements Runnable {
   public static class Builder {
 
     public WsiteConfiguration config;
+    public Path rootDirectory;
     public Logger logger;
     public HashManager hashManager;
     public TemplateEngine templateEngine;
@@ -622,6 +638,11 @@ public class WsiteService implements Runnable {
 
     public Builder setConfig(WsiteConfiguration config) {
       this.config = config;
+      return this;
+    }
+
+    public Builder setRootDirectory(Path rootDirectory) {
+      this.rootDirectory = rootDirectory;
       return this;
     }
 
@@ -652,7 +673,9 @@ public class WsiteService implements Runnable {
       }
       if (templateEngine == null) {
         Configuration freemarkerConfig = new Configuration(Configuration.VERSION_2_3_26);
-        freemarkerConfig.setTemplateLoader(new ClassTemplateLoader(WsiteService.class.getClassLoader(), "templates"));
+        freemarkerConfig.setTemplateLoader(
+            new ClassTemplateLoader(WsiteService.class.getClassLoader(), Reference.TEMPLATES_DIR)
+        );
         freemarkerConfig.setLocalizedLookup(false);
         templateEngine = new FreeMarkerEngine(freemarkerConfig);
       }
@@ -660,8 +683,7 @@ public class WsiteService implements Runnable {
       WsiteService service = new WsiteService();
       service.config = config;
       service.logger = logger;
-      service.rootDir = Paths.get(config.rootDirectory);
-      service.eventManager = new EventManager();
+      service.rootDir = rootDirectory.toAbsolutePath().normalize();
       service.hashManager = hashManager;
       service.templateEngine = templateEngine;
       return service;

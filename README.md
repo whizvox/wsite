@@ -14,6 +14,8 @@ This is the online source repository of Wsite, a lightweight, fully-customizable
 * Every route prefixed with `/control` will require an operator to be logged in.
 * Create / delete pages at `/control/newPage` / `/control/deletePage`
 * Create / delete users at `/control/newUser` / `control/deleteUser` (you can't delete yourself)
+* Configure settings at `/control/configSite` / `/control/configDatabase` / `/control/configSsl` (not used) / 
+`/control/configSmtp` (not used)
 * Shutdown / restart the server at `/control/shutdown` / `/control/restart`
 
 That's all for now. Come back later for more updates...

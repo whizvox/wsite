@@ -32,6 +32,15 @@ public class Reference {
 
   public static final int
       LOGIN_TOKEN_LENGTH = 24,
-      LOGIN_DEFAULT_EXPIRATION = 40320; // 28 days
+      LOGIN_DEFAULT_EXPIRATION = 40320, // 28 days
+      MIN_RESTART_INTERVAL = 360,       // 6 hours
+      MAX_RESTART_INTERVAL = 524160,    // 1 year
+      TICK_DELAY = 100;                 // 0.1 seconds
+  public static final String
+      TEMPLATES_DIR = "templates",
+      SECURE_DIR = "secure",
+      TEMP_DIR = "temp",
+      CONFIG_FILE = "configuration.json",
+      KEY_CONFIG = "config";
 
 }

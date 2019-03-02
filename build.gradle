@@ -5,7 +5,7 @@ plugins {
 }
 
 group 'me.whizvox.wsite'
-version '1.0.0-alpha-1'
+version '1.0.1-alpha-2'
 
 sourceCompatibility = 1.8
 
@@ -25,6 +25,7 @@ ext {
   sparkFreemarkerVersion = '2.7.1'
   owaspVersion = '20181114.1'
   commonmarkVersion = '0.12.1'
+  lombokVersion = '1.18.6'
 }
 
 dependencies {
@@ -37,6 +38,7 @@ dependencies {
   compile group: 'com.sparkjava', name: 'spark-template-freemarker', version: sparkFreemarkerVersion
   compile group: 'com.googlecode.owasp-java-html-sanitizer', name: 'owasp-java-html-sanitizer', version: owaspVersion
   compile group: 'com.atlassian.commonmark', name: 'commonmark', version: commonmarkVersion
+  compile group: 'org.projectlombok', name: 'lombok', version: lombokVersion
 }
 
 import org.apache.tools.ant.filters.ReplaceTokens
@@ -65,5 +67,6 @@ shadowJar {
   manifest {
     attributes 'Main-Class': mainClassName
   }
+  archiveName = project.name + '_' + project.version + '.jar'
   from compileTokenizedFiles.destinationDir
 }

@@ -133,4 +133,14 @@ public class Utils {
     return props;
   }
 
+  public static String propertiesToString(Properties props) {
+    if (props == null) {
+      return null;
+    }
+    StringBuilder sb = new StringBuilder();
+    props.forEach((key, value) -> sb.append(key).append('=').append(value).append(';'));
+    sb.setLength(sb.length() - 1); // remove the last semicolon
+    return sb.toString();
+  }
+
 }
