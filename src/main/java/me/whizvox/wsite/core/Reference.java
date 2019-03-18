@@ -40,6 +40,8 @@ public class Reference {
       TEMPLATES_DIR = "templates",
       SECURE_DIR = "secure",
       TEMP_DIR = "temp",
+      STATIC_DIR = "static",
+      ASSETS_DIR = "static/assets",
       CONFIG_FILE = "configuration.json",
       KEY_CONFIG = "config";
 

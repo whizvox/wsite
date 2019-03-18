@@ -7,6 +7,7 @@ import me.whizvox.wsite.event.EventListener;
 import me.whizvox.wsite.event.EventManager;
 import me.whizvox.wsite.hash.HashManager;
 import me.whizvox.wsite.util.IOUtils;
+import me.whizvox.wsite.util.JsonUtils;
 import me.whizvox.wsite.util.Utils;
 import org.jooq.DSLContext;
 import org.jooq.impl.DSL;
@@ -23,13 +24,11 @@ import java.io.OutputStream;
 import java.nio.CharBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
-import java.time.Instant;
-import java.time.LocalDate;
-import java.time.LocalDateTime;
-import java.time.LocalTime;
+import java.time.*;
 import java.time.temporal.ChronoUnit;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -83,8 +82,28 @@ public class WsiteService implements Runnable {
     return logger;
   }
 
-  public WsiteConfiguration getConfig() {
-    return config.copy();
+  public Map<String, Object> getConfigValues(String filter) {
+    Map<String, Object> values = new HashMap<>();
+    if (filter != null) {
+      switch (filter.toLowerCase()) {
+        case "all":
+          config.getAllValues(values);
+          break;
+        case "site":
+          config.getSiteValues(values);
+          break;
+        case "database":
+          config.getDatabaseValues(values);
+          break;
+        case "ssl":
+          config.getSslValues(values);
+          break;
+        case "smtp":
+          config.getSmtpValues(values);
+          break;
+      }
+    }
+    return values;
   }
 
   public Path resolvePath(String path) {
@@ -92,6 +111,7 @@ public class WsiteService implements Runnable {
   }
 
   public <T> void registerEventListener(Class<T> eventClass, EventListener<T> listener) {
+    logger.info("A new event listener for {} has been registered", eventClass.toString());
     eventManager.registerListener(listener, eventClass);
   }
 
@@ -99,7 +119,8 @@ public class WsiteService implements Runnable {
     eventManager.post(event);
   }
 
-  // FIXME: This is kind of a hacky way to allow the setup route to create a new user without changing the internal username and password patterns
+  // FIXME: This is kind of a hacky way to allow the setup route to create a new user without changing the internal
+  // username and password patterns
   public WsiteResult createNewUser(String username, String emailAddress, char[] password, boolean operator,
                                    Pattern usernameRequirements, Pattern passwordRequirements) {
     if (username == null || !usernameRequirements.matcher(username).matches()) {
@@ -127,6 +148,7 @@ public class WsiteService implements Runnable {
     user.password = hashManager.generate(password).compileAsHexString();
     user.whenCreated = Instant.now();
     user.operator = operator;
+    logger.info("Creating new user with user id {} and username {}", user.id, user.username);
     userRepo.insert(user);
     return WsiteResult.SUCCESS;
   }
@@ -150,6 +172,7 @@ public class WsiteService implements Runnable {
     if (user.username.equals(username)) {
       return WsiteResult.USER_USERNAME_NOT_CHANGED;
     }
+    logger.info("Updating username of user id {} and username {} to {}", user.id, user.username, username);
     user.username = username;
     userRepo.update(user);
     return WsiteResult.SUCCESS;
@@ -170,6 +193,8 @@ public class WsiteService implements Runnable {
     if (user.emailAddress.equals(emailAddress)) {
       return WsiteResult.USER_EMAIL_ADDRESS_NOT_CHANGED;
     }
+    logger.info("Updating email address of user id {} and username {} to {} from {}",
+        user.id, user.username, emailAddress, user.emailAddress);
     user.emailAddress = emailAddress;
     userRepo.update(user);
     return WsiteResult.SUCCESS;
@@ -190,6 +215,7 @@ public class WsiteService implements Runnable {
       return WsiteResult.USER_PASSWORD_NOT_CHANGED;
     }
     user.password = hashManager.generate(temp).compileAsHexString();
+    logger.info("Updating password of user id {} and username {}", user.id, user.username);
     userRepo.update(user);
     return WsiteResult.SUCCESS;
   }
@@ -203,6 +229,8 @@ public class WsiteService implements Runnable {
       return WsiteResult.USER_OPERATOR_NOT_CHANGED;
     }
     user.operator = operator;
+    logger.info("Updating user's operator status to {} with id {} and username {}",
+        user.operator, user.id, user.username);
     userRepo.update(user);
     return WsiteResult.SUCCESS;
   }
@@ -212,6 +240,7 @@ public class WsiteService implements Runnable {
     if (user == null) {
       return WsiteResult.USER_ID_NOT_FOUND;
     }
+    logger.info("Deleting user with id {} username {}", user.id, user.username);
     userRepo.delete(id);
     return WsiteResult.SUCCESS;
   }
@@ -232,7 +261,8 @@ public class WsiteService implements Runnable {
     return userRepo.selectNumberOfUsers();
   }
 
-  public WsiteResult createLogin(String query, char[] password, long minutesUntilExpire, String userAgent, String ipAddress, CharBuffer tokenBuffer) {
+  public WsiteResult createLogin(String query, char[] password, long minutesUntilExpire, String userAgent,
+                                 String ipAddress, CharBuffer tokenBuffer) {
     User user;
     if (query != null && Utils.checkUsername(query)) {
       user = userRepo.selectFromUsername(query);
@@ -269,6 +299,8 @@ public class WsiteService implements Runnable {
     login.userAgent = userAgent;
     login.ipAddress = ipAddress;
     login.expirationDate = Instant.now().plusSeconds(minutesUntilExpire * 60);
+    logger.info("Creating new login token for user {}, user agent {}, and ip {}",
+        login.userId, login.userAgent, login.ipAddress);
     loginRepo.insert(login);
     tokenBuffer.put(login.token);
     return WsiteResult.SUCCESS;
@@ -279,6 +311,8 @@ public class WsiteService implements Runnable {
     if (login == null) {
       return WsiteResult.LOGIN_TOKEN_NOT_FOUND;
     }
+    logger.info("Deleting login token from user {}, user agent {}, and ip {}",
+        login.userId, login.userAgent, login.ipAddress);
     loginRepo.delete(token);
     return WsiteResult.SUCCESS;
   }
@@ -304,41 +338,51 @@ public class WsiteService implements Runnable {
     return page;
   }
 
-  public WsiteResult createNewPage(String path, String title, String syntax, String contents) {
-    if (path == null) {
+  public WsiteResult createNewPage(Page page) {
+    if (page.path == null) {
       return WsiteResult.PAGE_INVALID_PATH;
     }
-    Page pePage = pageRepo.selectFromPath(path);
+    Page pePage = pageRepo.selectFromPath(page.path);
     if (pePage != null) {
       return WsiteResult.PAGE_PATH_CONFLICT;
     }
-    Page page = preparePage(new Page(path, title, contents, Page.Syntax.fromString(syntax), Instant.now(), null));
-    pageRepo.insert(page);
+    page.published = Instant.now();
+    page.lastEdited = null;
+    logger.info("Creating new page {}...", page.path);
+    pageRepo.insert(preparePage(page));
     return WsiteResult.SUCCESS;
   }
 
-  public WsiteResult updatePage(String oldPath, String newPath, String title, String syntax, String contents) {
-    if (oldPath == null || newPath == null) {
+  public WsiteResult createNewPage(String path, String title, String syntax, String contents) {
+    return createNewPage(new Page(path, title, contents, Page.Syntax.fromString(syntax), null, null));
+  }
+
+  public WsiteResult updatePage(String origPath, Page page) {
+    if (origPath == null || page.path == null) {
       return WsiteResult.PAGE_INVALID_PATH;
     }
-    Page checkPage = pageRepo.selectFromPath(newPath);
+    Page checkPage = pageRepo.selectFromPath(page.path);
     if (checkPage != null) {
       return WsiteResult.PAGE_PATH_CONFLICT;
     }
-    Page oldPage = pageRepo.selectFromPath(oldPath);
+    Page oldPage = pageRepo.selectFromPath(origPath);
     if (oldPage == null) {
       return WsiteResult.PAGE_PATH_NOT_FOUND;
     }
-    Page newPage = preparePage(
-        new Page(newPath, title, contents, Page.Syntax.fromString(syntax), oldPage.published, Instant.now())
-    );
-    if (!newPath.equalsIgnoreCase(oldPath)) {
-      pageRepo.delete(oldPath);
+    Page newPage = preparePage(page);
+    if (!page.path.equalsIgnoreCase(origPath)) {
+      logger.info("Updating page {} to {}...", origPath, newPage.path);
+      pageRepo.delete(origPath);
       pageRepo.insert(newPage);
     } else {
+      logger.info("Updating page {}...", page.path);
       pageRepo.update(newPage);
     }
     return WsiteResult.SUCCESS;
+  }
+
+  public WsiteResult updatePage(String origPath, String newPath, String title, String syntax, String contents) {
+    return updatePage(origPath, new Page(newPath, title, contents, Page.Syntax.fromString(syntax), null, null));
   }
 
   public WsiteResult deletePage(String path) {
@@ -346,12 +390,47 @@ public class WsiteService implements Runnable {
     if (page == null) {
       return WsiteResult.PAGE_PATH_NOT_FOUND;
     }
+    logger.info("Deleting page {}...", path);
     pageRepo.delete(page.path);
     return WsiteResult.SUCCESS;
   }
 
   public Page getPage(String path) {
     return pageRepo.selectFromPath(path);
+  }
+
+  public WsiteResult uploadAsset(String path, InputStream input, boolean replaceExisting) throws IOException {
+    if (Utils.isNullOrEmpty(path)) {
+      return WsiteResult.ASSET_NO_PATH;
+    }
+    Path outputFile = resolvePath(Reference.ASSETS_DIR).resolve(path);
+    if (!replaceExisting && Files.exists(outputFile)) {
+      return WsiteResult.ASSET_FILE_ALREADY_EXISTS;
+    }
+    logger.info("Creating new asset at {}...", path);
+    IOUtils.mkdirs(outputFile.getParent());
+    if (input == null) {
+      IOUtils.touch(outputFile);
+    } else {
+      Files.copy(input, outputFile, StandardCopyOption.REPLACE_EXISTING);
+    }
+    return WsiteResult.SUCCESS;
+  }
+
+  public WsiteResult deleteAsset(String path) throws IOException {
+    if (Utils.isNullOrEmpty(path)) {
+      return WsiteResult.ASSET_NO_PATH;
+    }
+    Path assetFile = resolvePath(Reference.ASSETS_DIR).resolve(path);
+    if (!Files.exists(assetFile)) {
+      return WsiteResult.ASSET_NOT_FOUND;
+    }
+    if (!Files.isRegularFile(assetFile)) {
+      return WsiteResult.ASSET_CANNOT_DELETE_NONFILE;
+    }
+    logger.info("Deleting asset {}...", path);
+    Files.delete(assetFile);
+    return WsiteResult.SUCCESS;
   }
 
   public String parseTemplate(String templateName, Object dataModel) {
@@ -373,7 +452,7 @@ public class WsiteService implements Runnable {
     } else {
       logger.warn("Running Wsite version {}", Reference.VERSION);
     }
-    logger.warn("Build released {}", Utils.formatFileSafeString(Reference.RELEASED));
+    logger.info("Build released {}", Reference.RELEASED.atZone(ZoneOffset.UTC));
 
     if (!Files.exists(rootDir)) {
       logger.warn("Creating root directory...");
@@ -384,7 +463,7 @@ public class WsiteService implements Runnable {
     Path configFile = resolvePath(Reference.CONFIG_FILE);
     if (Files.exists(configFile)) {
       try (InputStream in = Files.newInputStream(configFile)) {
-        config = IOUtils.readJson(in, WsiteConfiguration.class);
+        config = JsonUtils.readJson(in, WsiteConfiguration.class);
       }
     }
 
@@ -429,7 +508,9 @@ public class WsiteService implements Runnable {
       logger.info("Scheduling continuous restart task...");
       LocalDateTime midnight = LocalDateTime.of(LocalDate.now(), LocalTime.MIDNIGHT).plusDays(1);
       long untilRestart = LocalDateTime.now().until(midnight, ChronoUnit.MINUTES);
-      scheduledExecutorService.scheduleWithFixedDelay(this::restart, untilRestart , config.restartInterval, TimeUnit.MINUTES);
+      scheduledExecutorService.scheduleWithFixedDelay(
+          this::restart, untilRestart , config.restartInterval, TimeUnit.MINUTES
+      );
       logger.info("Scheduled to continuously restart every {} hours and {} minutes",
           config.restartInterval / 60, config.restartInterval % 60);
       logger.info("Scheduled to restart in {} hours and {} minutes", untilRestart / 60, untilRestart % 60);
@@ -445,12 +526,13 @@ public class WsiteService implements Runnable {
     }, 0, 1, TimeUnit.MINUTES);
     logger.info("Login cleanup will commence every 1 minute");
 
-    Path staticDir = resolvePath("static");
+    Path staticDir = resolvePath(Reference.STATIC_DIR);
     logger.info("Copying internal resources...");
-    Path staticCssDir = staticDir.resolve("assets/css");
-    IOUtils.mkdirs(staticCssDir);
-    IOUtils.copyFromResource("css/main.css", staticCssDir.resolve("main.css"), false);
-    IOUtils.copyFromResource("css/normalize.css", staticCssDir.resolve("normalize.css"), false);
+    Path staticAssetsDir = resolvePath(Reference.ASSETS_DIR);
+    IOUtils.copyFromResource("css/main.css", staticAssetsDir.resolve("css/main.css"), false);
+    IOUtils.copyFromResource("css/normalize.css", staticAssetsDir.resolve("css/normalize.css"), false);
+    IOUtils.copyFromResource("scripts/wsite.js", staticAssetsDir.resolve("scripts/wsite.js"), false);
+    IOUtils.copyFromResource("scripts/cookies.min.js", staticAssetsDir.resolve("scripts/cookies.min.js"), false);
 
     logger.info("Configuring Spark service...");
     IOUtils.mkdirs(staticDir);
@@ -467,30 +549,51 @@ public class WsiteService implements Runnable {
     Spark.before("/control/*", new Routes.UserFilter(this));
     Spark.get("/control/shutdown", new Routes.ShutdownRoute(this));
     Spark.get("/control/restart", new Routes.RestartRoute(this));
-    Spark.get("/login", new Routes.LoginGetRoute(this));
+    Spark.get("/login", Routes.getTemplatedRoute(this, "login.ftlh", false));
     Spark.post("/login", new Routes.LoginPostRoute(this));
     Spark.get("/logout", new Routes.LogoutGetRoute(this));
+    Spark.post("/control/config", new Routes.ConfigPostRoute(this));
 
     if (getNumberOfUsers() > 0) {
+      logger.info("Adding API routes...");
+      Spark.post("/api/asset/upload", new ApiRoutes.UploadAssetRoute(this));
+      Spark.post("/api/asset/delete", new ApiRoutes.DeleteAssetRoute(this));
+      Spark.get("/api/user/fetch", new ApiRoutes.UserGetRoute(this));
+      Spark.post("/api/user/create", new ApiRoutes.UserCreateRoute(this));
+      Spark.post("/api/user/updateUsername", new ApiRoutes.UserUpdateUsernameRoute(this));
+      Spark.post("/api/user/updateEmail", new ApiRoutes.UserUpdateEmailAddressRoute(this));
+      Spark.post("/api/user/updatePassword", new ApiRoutes.UserUpdatePasswordRoute(this));
+      Spark.post("/api/user/updateOperator", new ApiRoutes.UserUpdateOperatorRoute(this));
+      Spark.post("/api/user/delete", new ApiRoutes.UserDeleteRoute(this));
+      Spark.get("/api/page/fetch", new ApiRoutes.PageGetRoute(this));
+      Spark.post("/api/page/create", new ApiRoutes.PageCreateRoute(this));
+      Spark.post("/api/page/update", new ApiRoutes.PageUpdateRoute(this));
+      Spark.post("/api/page/delete", new ApiRoutes.PageDeleteRoute(this));
+      Spark.post("/api/login/create", new ApiRoutes.LoginCreateRoute(this));
+      Spark.post("/api/login/delete", new ApiRoutes.LoginDeleteRoute(this));
+      Spark.get("/api/config/fetch", new ApiRoutes.ConfigGetRoute(this));
+      Spark.post("/api/config/update", new ApiRoutes.ConfigUpdateRoute(this));
+
       logger.info("Adding standard routes...");
-      Spark.get("/control/newPage", new Routes.NewPageGetRoute(this));
-      Spark.post("/control/newPage", new Routes.NewPagePostRoute(this));
-      Spark.get("/control/deletePage", new Routes.DeletePageGetRoute(this));
+      Spark.get("/control/uploadAsset", Routes.getTemplatedRoute(this, "uploadAsset.ftlh", true));
+      Spark.post("/control/uploadAsset", new Routes.UploadAssetPostRoute(this));
+      Spark.get("/control/deleteAsset", Routes.getTemplatedRoute(this, "deleteAsset.ftlh", true));
+      Spark.post("/control/deleteAsset", new Routes.DeleteAssetPostRoute(this));
+      Spark.get("/control/createPage", Routes.getTemplatedRoute(this, "newPage.ftlh", true));
+      Spark.post("/control/createPage", new Routes.NewPagePostRoute(this));
+      Spark.get("/control/deletePage", Routes.getTemplatedRoute(this, "deletePage.ftlh", true));
       Spark.post("/control/deletePage", new Routes.DeletePagePostRoute(this));
-      Spark.get("/control/newUser", new Routes.NewUserGetRoute(this));
-      Spark.post("/control/newUser", new Routes.NewUserPostRoute(this));
-      Spark.get("/control/deleteUser", new Routes.DeleteUserGetRoute(this));
+      Spark.get("/control/createUser", Routes.getTemplatedRoute(this, "newUser.ftlh", true));
+      Spark.post("/control/createUser", new Routes.NewUserPostRoute(this));
+      Spark.get("/control/deleteUser", Routes.getTemplatedRoute(this, "deleteUser.ftlh", true));
       Spark.post("/control/deleteUser", new Routes.DeleteUserPostRoute(this));
-      Spark.get("/control/configSite", new Routes.ConfigSiteGetRoute(this));
-      Spark.post("/control/configSite", new Routes.ConfigSitePostRoute(this));
-      Spark.get("/control/configDatabase", new Routes.ConfigDatabaseGetRoute(this));
-      Spark.post("/control/configDatabase", new Routes.ConfigDatabasePostRoute(this));
-      Spark.get("/control/configSsl", new Routes.ConfigSslGetRoute(this));
-      Spark.post("/control/configSsl", new Routes.ConfigSslPostRoute(this));
-      Spark.get("/control/configSmtp", new Routes.ConfigSmtpGetRoute(this));
-      Spark.post("/control/configSmtp", new Routes.ConfigSmtpPostRoute(this));
+      Spark.get("/control/configSite", Routes.getTemplatedRoute(this, "configSite.ftlh", true));
+      Spark.get("/control/configDatabase", Routes.getTemplatedRoute(this, "configDatabase.ftlh", true));
+      Spark.get("/control/configSsl", Routes.getTemplatedRoute(this, "configSsl.ftlh", true));
+      Spark.get("/control/configSmtp", Routes.getTemplatedRoute(this, "configSmtp.ftlh", true));
       Spark.get("/veryimportant/teapot", new Routes.TeapotRoute(this));
-      Spark.get("/:pagePath", new Routes.PageGetRoute(this));
+      Spark.get("/:path", new Routes.PageGetRoute(this));
+      Spark.get("/", new Routes.IndexPageRoute(this, config.indexPage));
     } else {
       // TODO: Include some sort of system where a setup file can instead be used
       logger.warn("No users found. Will instead add setup route...");
@@ -510,7 +613,7 @@ public class WsiteService implements Runnable {
     logger.info("Saving settings...");
     Path configFile = resolvePath(Reference.CONFIG_FILE);
     try (OutputStream out = Files.newOutputStream(configFile)) {
-      IOUtils.writeJson(out, config);
+      JsonUtils.writeJson(out, config);
     }
   }
 

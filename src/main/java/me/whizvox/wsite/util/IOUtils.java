@@ -1,12 +1,10 @@
 package me.whizvox.wsite.util;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.OutputStream;
 import java.net.URL;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.nio.file.attribute.BasicFileAttributes;
 
@@ -82,7 +80,7 @@ public class IOUtils {
     return true;
   }
 
-  public static String readEntireStream(InputStream in) throws IOException {
+  public static String readStringFromStream(InputStream in) throws IOException {
     ByteArrayOutputStream out = new ByteArrayOutputStream();
     final int BUFFER_SIZE = 1024;
     byte[] buffer = new byte[BUFFER_SIZE];
@@ -90,17 +88,15 @@ public class IOUtils {
     while ((read = in.read(buffer)) != -1) {
       out.write(buffer, 0, read);
     }
-    return out.toString();
+    return new String(out.toByteArray(), StandardCharsets.UTF_8);
   }
 
-  private static final ObjectMapper MAPPER = new ObjectMapper();
-
-  public static <T> T readJson(InputStream in, Class<T> cls) throws IOException {
-    return MAPPER.readValue(in, cls);
+  public static String readStringFromFile(Path input) throws IOException {
+    return new String(Files.readAllBytes(input), StandardCharsets.UTF_8);
   }
 
-  public static void writeJson(OutputStream out, Object obj) throws IOException {
-    MAPPER.writeValue(out, obj);
+  public static void writeStringToFile(Path output, String str) throws IOException {
+    Files.write(output, str.getBytes(StandardCharsets.UTF_8));
   }
 
 }

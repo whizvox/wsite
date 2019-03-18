@@ -2,23 +2,15 @@ package me.whizvox.wsite.core;
 
 import me.whizvox.wsite.database.Page;
 import me.whizvox.wsite.database.User;
-import me.whizvox.wsite.util.IOUtils;
+import me.whizvox.wsite.util.HttpUtils;
+import me.whizvox.wsite.util.Pair;
 import me.whizvox.wsite.util.Utils;
 import spark.*;
 
 import javax.servlet.MultipartConfigElement;
-import javax.servlet.http.Part;
 import java.io.InputStream;
-import java.nio.CharBuffer;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.Optional;
-import java.util.UUID;
-import java.util.regex.Pattern;
-import java.util.regex.PatternSyntaxException;
 
 import static spark.Spark.halt;
 
@@ -32,23 +24,16 @@ public class Routes {
     }
   }
 
-  abstract static class WsiteApiRoute implements Route {
-    protected WsiteService wsite;
-    public WsiteApiRoute(WsiteService wsite) {
-      this.wsite = wsite;
-    }
-  }
-
   abstract static class WsiteRoute implements Route {
-    protected WsiteService wsite;
+    private WsiteService wsite;
     public WsiteRoute(WsiteService wsite) {
       this.wsite = wsite;
     }
-    protected abstract Object handle_do(Request request, Response response) throws Exception;
+    protected abstract Object handle_do(Request request, Response response, WsiteService wsite) throws Exception;
     @Override
     public Object handle(Request request, Response response) throws Exception {
       try {
-        return handle_do(request, response);
+        return handle_do(request, response, wsite);
       } catch (HaltException e) {
         throw e;
       } catch (Exception e) {
@@ -61,11 +46,16 @@ public class Routes {
     }
   }
 
-  abstract static class WsiteExceptionHandler<T extends Exception> implements ExceptionHandler<T> {
-    protected WsiteService wsite;
-    public WsiteExceptionHandler(WsiteService wsite) {
-      this.wsite = wsite;
-    }
+  public static Route getTemplatedRoute(WsiteService wsite, String name, boolean needsOperator) {
+    return new WsiteRoute(wsite) {
+      @Override
+      protected Object handle_do(Request request, Response response, WsiteService wsite) throws Exception {
+        if (needsOperator) {
+          checkUserPermission(wsite, request);
+        }
+        return wsite.parseTemplate(name, setupBasicDataModel(wsite));
+      }
+    };
   }
 
   private static void checkUserPermission(WsiteService wsite, Request request) {
@@ -107,7 +97,7 @@ public class Routes {
       super(wsite);
     }
     @Override
-    public Object handle_do(Request request, Response response) throws Exception {
+    public Object handle_do(Request request, Response response, WsiteService wsite) throws Exception {
       if (!Reference.usingDevBuild()) { // allow the user of a dev build to shutdown a server
         checkUserPermission(wsite, request);
       }
@@ -121,7 +111,7 @@ public class Routes {
       super(wsite);
     }
     @Override
-    public Object handle_do(Request request, Response response) throws Exception {
+    public Object handle_do(Request request, Response response, WsiteService wsite) throws Exception {
       checkUserPermission(wsite, request);
       wsite.restart();
       return "Server is now restarting...";
@@ -129,12 +119,7 @@ public class Routes {
   }
 
   public static class PageGetRoute extends WsiteRoute {
-    public PageGetRoute(WsiteService wsite) {
-      super(wsite);
-    }
-    @Override
-    public Object handle_do(Request request, Response response) throws Exception {
-      String path = request.params(":pagePath");
+    public static String getPage(WsiteService wsite, Request request, String path) {
       if (Utils.isNullOrEmpty(path)) {
         path = "home";
       }
@@ -178,16 +163,24 @@ public class Routes {
       }
       return contents;
     }
-  }
-
-  public static class NewPageGetRoute extends WsiteRoute {
-    public NewPageGetRoute(WsiteService wsite) {
+    public PageGetRoute(WsiteService wsite) {
       super(wsite);
     }
     @Override
-    public Object handle_do(Request request, Response response) throws Exception {
-      checkUserPermission(wsite, request);
-      return wsite.parseTemplate("newPage.ftlh", setupBasicDataModel(wsite));
+    public Object handle_do(Request request, Response response, WsiteService wsite) throws Exception {
+      return getPage(wsite, request, request.params(":path"));
+    }
+  }
+
+  public static class IndexPageRoute extends WsiteRoute {
+    private final String path;
+    public IndexPageRoute(WsiteService wsite, String path) {
+      super(wsite);
+      this.path = path;
+    }
+    @Override
+    protected Object handle_do(Request request, Response response, WsiteService wsite) throws Exception {
+      return PageGetRoute.getPage(wsite, request, path);
     }
   }
 
@@ -196,25 +189,9 @@ public class Routes {
       super(wsite);
     }
     @Override
-    public Object handle_do(Request request, Response response) throws Exception {
+    protected Object handle_do(Request request, Response response, WsiteService wsite) throws Exception {
       checkUserPermission(wsite, request);
-      QueryParamsMap params = request.queryMap();
-      String path = params.get("path").value();
-      String title = params.get("title").value();
-      String contents = params.get("contents").value();
-      String syntax = params.get("syntax").value();
-      return wsite.createNewPage(path, title, syntax, contents);
-    }
-  }
-
-  public static class DeletePageGetRoute extends WsiteRoute {
-    public DeletePageGetRoute(WsiteService wsite) {
-      super(wsite);
-    }
-    @Override
-    public Object handle_do(Request request, Response response) throws Exception {
-      checkUserPermission(wsite, request);
-      return wsite.parseTemplate("deletePage.ftlh", setupBasicDataModel(wsite));
+      return ApiRoutes.PageCreateRoute.createPage(request, wsite);
     }
   }
 
@@ -223,56 +200,20 @@ public class Routes {
       super(wsite);
     }
     @Override
-    public Object handle_do(Request request, Response response) throws Exception {
+    protected Object handle_do(Request request, Response response, WsiteService wsite) throws Exception {
       checkUserPermission(wsite, request);
-      String path = request.queryMap("path").value();
-      return wsite.deletePage(path);
-    }
-  }
-
-  public static class NewUserGetRoute extends WsiteRoute {
-    public NewUserGetRoute(WsiteService wsite) {
-      super(wsite);
-    }
-    @Override
-    public Object handle_do(Request request, Response response) throws Exception {
-      checkUserPermission(wsite, request);
-      return wsite.parseTemplate("newUser.ftlh", setupBasicDataModel(wsite));
+      return ApiRoutes.PageDeleteRoute.deletePage(wsite, request);
     }
   }
 
   public static class NewUserPostRoute extends WsiteRoute {
-    static WsiteResult createNewUser(WsiteService wsite, Request request) {
-      QueryParamsMap params = request.queryMap();
-      String username = params.get("userUsername").value();
-      String emailAddress = params.get("userEmailAddress").value();
-      String password = params.get("userPassword").value();
-      boolean operator;
-      if (wsite.getNumberOfUsers() > 0) {
-        operator = Optional.ofNullable(params.get("userOperator").booleanValue()).orElse(false);
-      } else {
-        operator = true;
-      }
-      return wsite.createNewUser(username, emailAddress, password.toCharArray(), operator);
-    }
     public NewUserPostRoute(WsiteService wsite) {
       super(wsite);
     }
     @Override
-    public Object handle_do(Request request, Response response) throws Exception {
+    protected Object handle_do(Request request, Response response, WsiteService wsite) throws Exception {
       checkUserPermission(wsite, request);
-      return createNewUser(wsite, request);
-    }
-  }
-
-  public static class DeleteUserGetRoute extends WsiteRoute {
-    public DeleteUserGetRoute(WsiteService wsite) {
-      super(wsite);
-    }
-    @Override
-    public Object handle_do(Request request, Response response) throws Exception {
-      checkUserPermission(wsite, request);
-      return wsite.parseTemplate("deleteUser.ftlh", setupBasicDataModel(wsite));
+      return ApiRoutes.UserCreateRoute.createUser(wsite, request);
     }
   }
 
@@ -281,44 +222,9 @@ public class Routes {
       super(wsite);
     }
     @Override
-    public Object handle_do(Request request, Response response) throws Exception {
+    protected Object handle_do(Request request, Response response, WsiteService wsite) throws Exception {
       checkUserPermission(wsite, request);
-      QueryParamsMap params = request.queryMap();
-      String idStr = params.get("id").value();
-      UUID id = null;
-      if (idStr != null) {
-        try {
-          id = UUID.fromString(idStr);
-        } catch (IllegalArgumentException ignored) {}
-      }
-      String username = params.get("username").value();
-      String emailAddress = params.get("email_address").value();
-      User user = null;
-      if (id != null) {
-        user = wsite.getUserFromId(id);
-      } else if (!Utils.isNullOrEmpty(username)) {
-        user = wsite.getUserFromUsername(username);
-      } else if (!Utils.isNullOrEmpty(emailAddress)) {
-        user = wsite.getUserFromEmailAddress(emailAddress);
-      }
-      if (user == null) {
-        return WsiteResult.USER_INVALID_QUERY;
-      }
-      User sUser = request.attribute(UserFilter.ATTRIBUTE_USER);
-      if (sUser.id.equals(user.id)) {
-        return WsiteResult.USER_MATCHING_IDS;
-      }
-      return wsite.deleteUser(user.id);
-    }
-  }
-
-  public static class LoginGetRoute extends WsiteRoute {
-    public LoginGetRoute(WsiteService wsite) {
-      super(wsite);
-    }
-    @Override
-    public Object handle_do(Request request, Response response) throws Exception {
-      return wsite.parseTemplate("login.ftlh", setupBasicDataModel(wsite));
+      return ApiRoutes.UserDeleteRoute.deleteUser(wsite, request);
     }
   }
 
@@ -327,21 +233,12 @@ public class Routes {
       super(wsite);
     }
     @Override
-    public Object handle_do(Request request, Response response) throws Exception {
-      QueryParamsMap params = request.queryMap();
-      String query = params.get("username").value();
-      String password = params.get("password").value();
-      boolean rememberMe = Optional.ofNullable(params.get("remember_me").booleanValue()).orElse(false);
-      int minutesUntilExpire = rememberMe ? 10008 : 60; // 1 week vs 1 hour
-      CharBuffer tokenBuffer = CharBuffer.allocate(Reference.LOGIN_TOKEN_LENGTH);
-      WsiteResult result = wsite.createLogin(query, password.toCharArray(), minutesUntilExpire, request.userAgent(),
-          request.ip(), tokenBuffer);
-      if (result == WsiteResult.SUCCESS) {
-        tokenBuffer.flip();
-        String token = tokenBuffer.toString();
-        response.cookie(UserFilter.COOKIE_LOGIN_TOKEN, token);
+    public Object handle_do(Request request, Response response, WsiteService wsite) throws Exception {
+      Pair<WsiteResult, String> res = ApiRoutes.LoginCreateRoute.createLogin(wsite, request);
+      if (res.left == WsiteResult.SUCCESS) {
+        response.cookie(UserFilter.COOKIE_LOGIN_TOKEN, res.right);
       }
-      return result;
+      return res.left;
     }
   }
 
@@ -350,290 +247,52 @@ public class Routes {
       super(wsite);
     }
     @Override
-    public Object handle_do(Request request, Response response) throws Exception {
+    public Object handle_do(Request request, Response response, WsiteService wsite) throws Exception {
       String token = request.cookie(UserFilter.COOKIE_LOGIN_TOKEN);
       return wsite.deleteLogin(token);
     }
   }
 
-  public static class ConfigSiteGetRoute extends WsiteRoute {
-    public ConfigSiteGetRoute(WsiteService wsite) {
+  public static class ConfigPostRoute extends WsiteRoute {
+    public ConfigPostRoute(WsiteService wsite) {
       super(wsite);
     }
     @Override
-    protected Object handle_do(Request request, Response response) throws Exception {
+    protected Object handle_do(Request request, Response response, WsiteService wsite) throws Exception {
       checkUserPermission(wsite, request);
-      Map<String, Object> dataModel = setupBasicDataModel(wsite);
-      dataModel.put(Reference.KEY_CONFIG, wsite.getConfig());
-      return wsite.parseTemplate("configSite.ftlh", dataModel);
-    }
-  }
-
-  public static class ConfigSitePostRoute extends WsiteRoute {
-    static WsiteResult getSiteConfig(Request request, Map<String, Object> config) {
-      QueryParamsMap params = request.queryMap();
-      String siteName = params.get(WsiteConfiguration.KEY_SITE_NAME).value();
-      if (!Utils.isNullOrEmpty(siteName)) {
-        config.put(WsiteConfiguration.KEY_SITE_NAME, siteName);
-      } else {
-        return WsiteResult.CONFIG_NO_SITE_NAME;
-      }
-
-      String portStr = params.get(WsiteConfiguration.KEY_PORT).value();
-      boolean validPort = false;
-      if (!Utils.isNullOrEmpty(portStr)) {
-        try {
-          int port = Integer.parseInt(portStr);
-          if (port >= 0 && port <= Short.MAX_VALUE) {
-            config.put(WsiteConfiguration.KEY_PORT, port);
-            validPort = true;
-          }
-        } catch (NumberFormatException ignored) {}
-      }
-      if (!validPort) {
-        return WsiteResult.CONFIG_INVALID_PORT;
-      }
-
-      boolean continuouslyRestart = Optional.ofNullable(
-          params.get(WsiteConfiguration.KEY_CONTINUOUSLY_RESTART).booleanValue()).orElse(true);
-      config.put(WsiteConfiguration.KEY_CONTINUOUSLY_RESTART, continuouslyRestart);
-
-      String restartIntervalStr = params.get(WsiteConfiguration.KEY_RESTART_INTERVAL).value();
-      boolean validRestartInterval = false;
-      if (!Utils.isNullOrEmpty(restartIntervalStr)) {
-        try {
-          int restartInterval = Integer.parseInt(restartIntervalStr);
-          if (restartInterval >= Reference.MIN_RESTART_INTERVAL && restartInterval <= Reference.MAX_RESTART_INTERVAL) {
-            config.put(WsiteConfiguration.KEY_RESTART_INTERVAL, restartInterval);
-            validRestartInterval = true;
-          }
-        } catch (NumberFormatException ignored) {}
-      }
-      if (!validRestartInterval) {
-        return WsiteResult.CONFIG_INVALID_RESTART_INTERVAL;
-      }
-
-      String usernamePattern = params.get(WsiteConfiguration.KEY_USERNAME_PATTERN).value();
-      if (!Utils.isNullOrEmpty(usernamePattern)) {
-        try {
-          Pattern.compile(usernamePattern);
-          config.put(WsiteConfiguration.KEY_USERNAME_PATTERN, usernamePattern);
-        } catch (PatternSyntaxException e) {
-          return WsiteResult.CONFIG_INVALID_USERNAME_PATTERN;
-        }
-      }
-
-      String passwordPattern = params.get(WsiteConfiguration.KEY_PASSWORD_PATTERN).value();
-      if (!Utils.isNullOrEmpty(passwordPattern)) {
-        try {
-          Pattern.compile(passwordPattern);
-          config.put(WsiteConfiguration.KEY_PASSWORD_PATTERN, passwordPattern);
-        } catch (PatternSyntaxException e) {
-          return WsiteResult.CONFIG_INVALID_PASSWORD_PATTERN;
-        }
-      }
-      return WsiteResult.SUCCESS;
-    }
-    public ConfigSitePostRoute(WsiteService wsite) {
-      super(wsite);
-    }
-    @Override
-    protected Object handle_do(Request request, Response response) throws Exception {
-      checkUserPermission(wsite, request);
-      Map<String, Object> config = new HashMap<>();
-      WsiteResult result = getSiteConfig(request, config);
-      if (result == WsiteResult.SUCCESS) {
-        wsite.restartWithNewConfiguration(config);
-      }
-      return result;
-    }
-  }
-
-  public static class ConfigDatabaseGetRoute extends WsiteRoute {
-    public ConfigDatabaseGetRoute(WsiteService wsite) {
-      super(wsite);
-    }
-    @Override
-    protected Object handle_do(Request request, Response response) throws Exception {
-      checkUserPermission(wsite, request);
-      Map<String, Object> dataModel = setupBasicDataModel(wsite);
-      dataModel.put(Reference.KEY_CONFIG, wsite.getConfig());
-      return wsite.parseTemplate("configDatabase.ftlh", dataModel);
-    }
-  }
-
-  public static class ConfigDatabasePostRoute extends WsiteRoute {
-    static WsiteResult getDatabaseConfig(Request request, Map<String, Object> config) {
-      QueryParamsMap params = request.queryMap();
-      String databaseUrl = params.get(WsiteConfiguration.KEY_DATABASE_URL).value();
-      if (!Utils.isNullOrEmpty(databaseUrl)) {
-        config.put(WsiteConfiguration.KEY_DATABASE_URL, databaseUrl);
-      } else {
-        return WsiteResult.CONFIG_NO_DATABASE_URL;
-      }
-
-      String databaseUsername = params.get(WsiteConfiguration.KEY_DATABASE_USERNAME).value();
-      if (!Utils.isNullOrEmpty(databaseUsername)) {
-        config.put(WsiteConfiguration.KEY_DATABASE_USERNAME, databaseUsername);
-        String databasePassword = params.get(WsiteConfiguration.KEY_DATABASE_PASSWORD).value();
-        if (!Utils.isNullOrEmpty(databasePassword)) {
-          config.put(WsiteConfiguration.KEY_DATABASE_PASSWORD, databasePassword);
-        }
-      }
-
-      String databasePropertiesStr = params.get(WsiteConfiguration.KEY_DATABASE_PROPERTIES).value();
-      if (!Utils.isNullOrEmpty(databasePropertiesStr)) {
-        config.put(WsiteConfiguration.KEY_DATABASE_PROPERTIES, Utils.parseProperties(databasePropertiesStr));
-      }
-
-      return WsiteResult.SUCCESS;
-    }
-    public ConfigDatabasePostRoute(WsiteService wsite) {
-      super(wsite);
-    }
-    @Override
-    protected Object handle_do(Request request, Response response) throws Exception {
-      checkUserPermission(wsite, request);
-      Map<String, Object> config = new HashMap<>();
-      WsiteResult result = getDatabaseConfig(request, config);
-      if (result == WsiteResult.SUCCESS) {
-        wsite.restartWithNewConfiguration(config);
-      }
-      return result;
-    }
-  }
-
-  public static class ConfigSslGetRoute extends WsiteRoute {
-    public ConfigSslGetRoute(WsiteService wsite) {
-      super(wsite);
-    }
-    @Override
-    protected Object handle_do(Request request, Response response) throws Exception {
-      checkUserPermission(wsite, request);
-      Map<String, Object> dataModel = setupBasicDataModel(wsite);
-      dataModel.put(Reference.KEY_CONFIG, wsite.getConfig());
-      return wsite.parseTemplate("setupSsl.ftlh", dataModel);
-    }
-  }
-
-  public static class ConfigSslPostRoute extends WsiteRoute {
-    static WsiteResult getSslConfig(WsiteService wsite, Request request, Map<String, Object> config) throws Exception {
-      QueryParamsMap params = request.queryMap();
-
-      boolean enableSsl = Optional.ofNullable(params.get(WsiteConfiguration.KEY_ENABLE_SSL).booleanValue()).orElse(false);
-      config.put(WsiteConfiguration.KEY_ENABLE_SSL, enableSsl);
-
-      if (enableSsl) {
-        Path secureDir = wsite.resolvePath(Reference.SECURE_DIR);
-        IOUtils.mkdirs(secureDir);
-
-        Part keystorePart = request.raw().getPart(WsiteConfiguration.KEY_KEYSTORE_FILE);
-        if (keystorePart != null) {
-          Path keystorePath = secureDir.resolve(keystorePart.getSubmittedFileName());
-          wsite.getLogger().warn("Downloading new keystore to {}...", keystorePath);
-          try (InputStream in = keystorePart.getInputStream()) {
-            Files.copy(in, keystorePath, StandardCopyOption.REPLACE_EXISTING);
-          }
-          config.put(WsiteConfiguration.KEY_KEYSTORE_FILE, keystorePath.toString());
-          String keystorePassword = params.get(WsiteConfiguration.KEY_KEYSTORE_PASSWORD).value();
-          if (keystorePassword != null) {
-            config.put(WsiteConfiguration.KEY_KEYSTORE_PASSWORD, keystorePassword);
-          }
-        } else {
-          return WsiteResult.CONFIG_NO_KEYSTORE;
-        }
-
-        Part truststorePart = request.raw().getPart(WsiteConfiguration.KEY_TRUSTSTORE_FILE);
-        if (truststorePart != null) {
-          Path truststorePath = secureDir.resolve(truststorePart.getSubmittedFileName());
-          wsite.getLogger().warn("Downloading new truststore to {}...", truststorePath);
-          try (InputStream in = truststorePart.getInputStream()) {
-            Files.copy(in, truststorePath, StandardCopyOption.REPLACE_EXISTING);
-          }
-          config.put(WsiteConfiguration.KEY_TRUSTSTORE_FILE, truststorePath.toString());
-          String truststorePassword = params.get(WsiteConfiguration.KEY_TRUSTSTORE_PASSWORD).value();
-          if (truststorePassword != null) {
-            config.put(WsiteConfiguration.KEY_TRUSTSTORE_PASSWORD, truststorePassword);
-          }
-        }
-      }
-
-      return WsiteResult.SUCCESS;
-    }
-    public ConfigSslPostRoute(WsiteService wsite) {
-      super(wsite);
-    }
-    @Override
-    protected Object handle_do(Request request, Response response) throws Exception {
       setupMultipartConfig(wsite, request);
-      checkUserPermission(wsite, request);
-      Map<String, Object> config = new HashMap<>();
-      WsiteResult result = getSslConfig(wsite, request, config);
-      if (result == WsiteResult.SUCCESS) {
-        wsite.restartWithNewConfiguration(config);
-      }
-      return result;
-    }
-  }
-
-  public static class ConfigSmtpGetRoute extends WsiteRoute {
-    public ConfigSmtpGetRoute(WsiteService wsite) {
-      super(wsite);
-    }
-    @Override
-    protected Object handle_do(Request request, Response response) throws Exception {
-      checkUserPermission(wsite, request);
-      Map<String, Object> dataModel = setupBasicDataModel(wsite);
-      dataModel.put(Reference.KEY_CONFIG, wsite.getConfig());
-      return wsite.parseTemplate("configSmtp.ftlh", dataModel);
-    }
-  }
-
-  public static class ConfigSmtpPostRoute extends WsiteRoute {
-    static WsiteResult getSmtpConfig(Request request, Map<String, Object> config) {
-      QueryParamsMap params = request.queryMap();
-
-      boolean enableSmtp = Optional.ofNullable(params.get(WsiteConfiguration.KEY_ENABLE_SMTP).booleanValue()).orElse(false);
-      config.put(WsiteConfiguration.KEY_ENABLE_SMTP, enableSmtp);
-
-      if (enableSmtp) {
-        String smtpHost = params.get(WsiteConfiguration.KEY_SMTP_HOST).value();
-        if (!Utils.isNullOrEmpty(smtpHost)) {
-          config.put(WsiteConfiguration.KEY_SMTP_HOST, smtpHost);
-        } else {
-          return WsiteResult.CONFIG_NO_SMTP_HOST;
-        }
-
-        String smtpFrom = params.get(WsiteConfiguration.KEY_SMTP_FROM).value();
-        if (!Utils.isNullOrEmpty(smtpFrom)) {
-          config.put(WsiteConfiguration.KEY_SMTP_FROM, smtpFrom);
-        } else {
-          return WsiteResult.CONFIG_NO_SMTP_FROM;
-        }
-
-        String smtpUser = params.get(WsiteConfiguration.KEY_SMTP_USER).value();
-        if (!Utils.isNullOrEmpty(smtpUser)) {
-          config.put(WsiteConfiguration.KEY_SMTP_USER, smtpUser);
-        }
-
-        String smtpPassword = params.get(WsiteConfiguration.KEY_SMTP_PASSWORD).value();
-        if (smtpPassword != null) {
-          config.put(WsiteConfiguration.KEY_SMTP_PASSWORD, smtpPassword);
-        }
-      }
-
-      return WsiteResult.SUCCESS;
-    }
-    public ConfigSmtpPostRoute(WsiteService wsite) {
-      super(wsite);
-    }
-    @Override
-    protected Object handle_do(Request request, Response response) throws Exception {
-      checkUserPermission(wsite, request);
-      Map<String, Object> config = new HashMap<>();
-      getSmtpConfig(request, config);
+      Map<String, Object> config = ApiRoutes.getConfig(wsite, request);
       wsite.restartWithNewConfiguration(config);
       return WsiteResult.SUCCESS;
+    }
+  }
+
+  public static class UploadAssetPostRoute extends WsiteRoute {
+    public UploadAssetPostRoute(WsiteService wsite) {
+      super(wsite);
+    }
+    @Override
+    protected Object handle_do(Request request, Response response, WsiteService wsite) throws Exception {
+      checkUserPermission(wsite, request);
+      setupMultipartConfig(wsite, request);
+      QueryParamsMap params = request.queryMap();
+      try (InputStream in = HttpUtils.getFile(request, "file")) {
+        String path = HttpUtils.getString(params, "path");
+        boolean replace = HttpUtils.getBool(params, "replace");
+        return wsite.uploadAsset(path, in, replace);
+      }
+    }
+  }
+
+  public static class DeleteAssetPostRoute extends WsiteRoute {
+    public DeleteAssetPostRoute(WsiteService wsite) {
+      super(wsite);
+    }
+    @Override
+    protected Object handle_do(Request request, Response response, WsiteService wsite) throws Exception {
+      checkUserPermission(wsite, request);
+      String path = HttpUtils.getString(request.queryMap(), "path");
+      return wsite.deleteAsset(path);
     }
   }
 
@@ -642,9 +301,9 @@ public class Routes {
       super(wsite);
     }
     @Override
-    protected Object handle_do(Request request, Response response) throws Exception {
+    protected Object handle_do(Request request, Response response, WsiteService wsite) throws Exception {
       Map<String, Object> dataModel = setupBasicDataModel(wsite);
-      dataModel.put(Reference.KEY_CONFIG, wsite.getConfig());
+      dataModel.put(Reference.KEY_CONFIG, wsite.getConfigValues("all"));
       return wsite.parseTemplate("setup.ftlh", dataModel);
     }
   }
@@ -654,37 +313,16 @@ public class Routes {
       super(wsite);
     }
     @Override
-    protected Object handle_do(Request request, Response response) throws Exception {
+    protected Object handle_do(Request request, Response response, WsiteService wsite) throws Exception {
       setupMultipartConfig(wsite, request);
-      Map<String, Object> config = new HashMap<>();
-
-      WsiteResult siteCfgResult = ConfigSitePostRoute.getSiteConfig(request, config);
-      if (siteCfgResult != WsiteResult.SUCCESS) {
-        return siteCfgResult;
+      Map<String, Object> cfg = ApiRoutes.getConfig(wsite, request);
+      WsiteResult res = ApiRoutes.UserCreateRoute.createUser(wsite, request);
+      // TODO: As of right now it's possible to change the client's HTML to create a user that's not an operator
+      if (res == WsiteResult.SUCCESS) {
+        wsite.getLogger().info("Setup sequence has successfully completed");
+        wsite.restartWithNewConfiguration(cfg);
       }
-
-      WsiteResult dbCfgResult = ConfigDatabasePostRoute.getDatabaseConfig(request, config);
-      if (dbCfgResult != WsiteResult.SUCCESS) {
-        return dbCfgResult;
-      }
-
-      WsiteResult sslCfgResult = ConfigSslPostRoute.getSslConfig(wsite, request, config);
-      if (sslCfgResult != WsiteResult.SUCCESS) {
-        return sslCfgResult;
-      }
-
-      WsiteResult smtpCfgResult = ConfigSmtpPostRoute.getSmtpConfig(request, config);
-      if (smtpCfgResult != WsiteResult.SUCCESS) {
-        return smtpCfgResult;
-      }
-
-      WsiteResult newUserResult = NewUserPostRoute.createNewUser(wsite, request);
-      if (newUserResult != WsiteResult.SUCCESS) {
-        return newUserResult;
-      }
-
-      wsite.restartWithNewConfiguration(config);
-      return WsiteResult.SUCCESS;
+      return res;
     }
   }
 
@@ -693,7 +331,7 @@ public class Routes {
       super(wsite);
     }
     @Override
-    protected Object handle_do(Request request, Response response) throws Exception {
+    protected Object handle_do(Request request, Response response, WsiteService wsite) throws Exception {
       haltWithBody(wsite, 418);
       return null;
     }

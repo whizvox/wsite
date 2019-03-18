@@ -1,3 +1,10 @@
+1.1.0-alpha-3
+- Introduce REST API routes
+- Index page is now configurable
+- Logging is now more informative
+- Now possible to upload and delete assets
+- /control/new<page|user> renamed to /control/create<page|user>
+
 1.0.1-alpha-2
 
 - Site settings are loaded before creation and saved between shutdowns

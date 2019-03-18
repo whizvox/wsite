@@ -10,12 +10,13 @@ import org.owasp.html.PolicyFactory;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.PrintStream;
-import java.io.StringWriter;
+import java.nio.charset.StandardCharsets;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
+import java.util.Base64;
 import java.util.Properties;
 import java.util.regex.Pattern;
 
@@ -137,10 +138,21 @@ public class Utils {
     if (props == null) {
       return null;
     }
-    StringBuilder sb = new StringBuilder();
-    props.forEach((key, value) -> sb.append(key).append('=').append(value).append(';'));
-    sb.setLength(sb.length() - 1); // remove the last semicolon
-    return sb.toString();
+    if (!props.isEmpty()) {
+      StringBuilder sb = new StringBuilder();
+      props.forEach((key, value) -> sb.append(key).append('=').append(value).append(';'));
+      sb.setLength(sb.length() - 1); // remove the last semicolon
+      return sb.toString();
+    }
+    return "";
+  }
+
+  public static String encodeBase64(String str) {
+    return Base64.getEncoder().encodeToString(str.getBytes(StandardCharsets.UTF_8));
+  }
+
+  public static String decodeBase64(String base64) {
+    return new String(Base64.getDecoder().decode(base64), StandardCharsets.UTF_8);
   }
 
 }

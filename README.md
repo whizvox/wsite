@@ -2,18 +2,26 @@
 
 This is the online source repository of Wsite, a lightweight, fully-customizable, Java-based web server and service.
 
+## How to run
 
-## Quick-use guide
+### Creating an executable Jar
 
-* Create an executable Jar by running `./gradlew shadowJar`. The result is located at `./build/libs`
-* Run the Jar by issuing the following command: `java -jar wsite-<version>.jar`
-* First running the Jar will result in a small setup service being hosted at `localhost:4568/`
-* Fill in (at minimum) the fields under `Initial user` (the SSL and SMTP fields don't do anything right now)
+Run `./gradlew shadowJar`. The result will be in `./build/libs/wsite-<version>.jar`
+
+### Via Gradle
+
+Run `./gradlew run`. The service will use `./rundir` as the working directory.
+
+## Quick-start guide
+
+* First running will result in a small setup service being hosted at `localhost:4568/`
+* Fill in (at minimum) the fields under `Initial operator` (the SSL and SMTP fields don't do anything right now)
 * Submit the form, and the server will restart with the standard routes
 * Login at `/login` (logout at `/logout`)
 * Every route prefixed with `/control` will require an operator to be logged in.
-* Create / delete pages at `/control/newPage` / `/control/deletePage`
-* Create / delete users at `/control/newUser` / `control/deleteUser` (you can't delete yourself)
+* Create / delete assets at `/control/createAsset` / `/control/deleteAsset`, publicly accessible at `/assets/<path>`
+* Create / delete pages at `/control/createPage` / `/control/deletePage`
+* Create / delete users at `/control/createUser` / `control/deleteUser` (you can't delete yourself)
 * Configure settings at `/control/configSite` / `/control/configDatabase` / `/control/configSsl` (not used) / 
 `/control/configSmtp` (not used)
 * Shutdown / restart the server at `/control/shutdown` / `/control/restart`
