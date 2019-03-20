@@ -9,8 +9,10 @@ import spark.*;
 
 import javax.servlet.MultipartConfigElement;
 import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.UUID;
 
 import static spark.Spark.halt;
 
@@ -60,6 +62,7 @@ public class Routes {
 
   private static void checkUserPermission(WsiteService wsite, Request request) {
     User user = request.attribute(UserFilter.ATTRIBUTE_USER);
+    // TODO: Check client's user agent, delete login and do not authorize if it doesn't match
     if (user == null || !user.operator) {
       haltWithBody(wsite, 403);
     }
@@ -195,6 +198,23 @@ public class Routes {
     }
   }
 
+  public static class EditPagePostRoute extends WsiteRoute {
+    public EditPagePostRoute(WsiteService wsite) {
+      super(wsite);
+    }
+    @Override
+    protected Object handle_do(Request request, Response response, WsiteService wsite) throws Exception {
+      checkUserPermission(wsite, request);
+      QueryParamsMap params = request.queryMap();
+      String origPath = HttpUtils.getString(params, "origPath");
+      String path = HttpUtils.getString(params, "path");
+      String title = HttpUtils.getString(params, "title");
+      String contents = HttpUtils.getString(params, "contents");
+      String syntax = HttpUtils.getString(params, "syntax");
+      return wsite.updatePage(origPath, path, title, syntax, contents);
+    }
+  }
+
   public static class DeletePagePostRoute extends WsiteRoute {
     public DeletePagePostRoute(WsiteService wsite) {
       super(wsite);
@@ -214,6 +234,75 @@ public class Routes {
     protected Object handle_do(Request request, Response response, WsiteService wsite) throws Exception {
       checkUserPermission(wsite, request);
       return ApiRoutes.UserCreateRoute.createUser(wsite, request);
+    }
+  }
+
+  public static class EditUserUsernamePostRoute extends WsiteRoute {
+    public EditUserUsernamePostRoute(WsiteService wsite) {
+      super(wsite);
+    }
+    @Override
+    protected Object handle_do(Request request, Response response, WsiteService wsite) throws Exception {
+      User user = request.attribute(UserFilter.ATTRIBUTE_USER);
+      if (user == null) {
+        haltWithBody(wsite, 403);
+      }
+      QueryParamsMap params = request.queryMap();
+      String newUsername = HttpUtils.getString(params, "username");
+      return wsite.updateUserUsername(user.id, newUsername);
+    }
+  }
+
+  public static class EditUserEmailPostRoute extends WsiteRoute {
+    public EditUserEmailPostRoute(WsiteService wsite) {
+      super(wsite);
+    }
+    @Override
+    protected Object handle_do(Request request, Response response, WsiteService wsite) throws Exception {
+      User user = request.attribute(UserFilter.ATTRIBUTE_USER);
+      if (user == null) {
+        haltWithBody(wsite, 403);
+      }
+      QueryParamsMap params = request.queryMap();
+      String newEmail = HttpUtils.getString(params, "email");
+      return wsite.updateUserEmailAddress(user.id, newEmail);
+    }
+  }
+
+  public static class EditUserPasswordRoute extends WsiteRoute {
+    public EditUserPasswordRoute(WsiteService wsite) {
+      super(wsite);
+    }
+    @Override
+    protected Object handle_do(Request request, Response response, WsiteService wsite) throws Exception {
+      User user = request.attribute(UserFilter.ATTRIBUTE_USER);
+      if (user == null) {
+        haltWithBody(wsite, 403);
+      }
+      QueryParamsMap params = request.queryMap();
+      char[] newPassword = HttpUtils.getCharArray(params, "password");
+      return wsite.updateUserPassword(user.id, newPassword);
+    }
+  }
+
+  public static class EditUserRoute extends WsiteRoute {
+    public EditUserRoute(WsiteService wsite) {
+      super(wsite);
+    }
+    @Override
+    protected Object handle_do(Request request, Response response, WsiteService wsite) throws Exception {
+      checkUserPermission(wsite, request);
+      User user = request.attribute(UserFilter.ATTRIBUTE_USER);
+      QueryParamsMap params = request.queryMap();
+      UUID id = HttpUtils.getUuid(params, "id");
+      if (id.equals(user.id)) {
+        return WsiteResult.USER_MATCHING_IDS;
+      }
+      String username = HttpUtils.getString(params, "username");
+      String email = HttpUtils.getString(params, "email");
+      char[] password = HttpUtils.getCharArray(params, "password");
+      boolean operator = HttpUtils.getBool(params, "operator");
+      return wsite.updateUser(id, username, email, password, operator);
     }
   }
 
@@ -253,6 +342,24 @@ public class Routes {
     }
   }
 
+  public static class ConfigGetRoute extends WsiteRoute {
+    private final String templateName;
+    private final String filterName;
+    public ConfigGetRoute(WsiteService wsite, String baseName) {
+      super(wsite);
+      templateName = "config" + baseName.substring(0, 1).toUpperCase() + baseName.substring(1) + ".ftlh";
+      filterName = baseName;
+    }
+    @Override
+    protected Object handle_do(Request request, Response response, WsiteService wsite) throws Exception {
+      checkUserPermission(wsite, request);
+      Map<String, Object> cfg = wsite.getConfigValues(filterName);
+      Map<String, Object> dataModel = setupBasicDataModel(wsite);
+      dataModel.put("config", cfg);
+      return wsite.parseTemplate(templateName, dataModel);
+    }
+  }
+
   public static class ConfigPostRoute extends WsiteRoute {
     public ConfigPostRoute(WsiteService wsite) {
       super(wsite);
@@ -281,6 +388,21 @@ public class Routes {
         boolean replace = HttpUtils.getBool(params, "replace");
         return wsite.uploadAsset(path, in, replace);
       }
+    }
+  }
+
+  public static class EditAssetPostRoute extends WsiteRoute {
+    public EditAssetPostRoute(WsiteService wsite) {
+      super(wsite);
+    }
+    @Override
+    protected Object handle_do(Request request, Response response, WsiteService wsite) throws Exception {
+      checkUserPermission(wsite, request);
+      QueryParamsMap params = request.queryMap();
+      String origPath = HttpUtils.getString(params, "origPath");
+      String path = HttpUtils.getString(params, "path");
+      String contents = HttpUtils.getString(params, "contents");
+      return wsite.editAsset(origPath, path, contents.getBytes(StandardCharsets.UTF_8));
     }
   }
 

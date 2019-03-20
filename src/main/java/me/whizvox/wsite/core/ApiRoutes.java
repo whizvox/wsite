@@ -2,16 +2,14 @@ package me.whizvox.wsite.core;
 
 import me.whizvox.wsite.database.Page;
 import me.whizvox.wsite.database.User;
-import me.whizvox.wsite.util.HttpUtils;
-import me.whizvox.wsite.util.JsonUtils;
-import me.whizvox.wsite.util.Pair;
-import me.whizvox.wsite.util.Utils;
+import me.whizvox.wsite.util.*;
 import spark.*;
 
 import javax.servlet.MultipartConfigElement;
 import javax.servlet.ServletException;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.CharBuffer;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
@@ -29,19 +27,50 @@ import static me.whizvox.wsite.core.WsiteConfiguration.*;
 public class ApiRoutes {
   private ApiRoutes() {}
 
-  private static void haltInvalidApiRequest(int status, WsiteResult result) {
-    Spark.halt(status, JsonUtils.toJson(new ApiGenericResult(false, result.toString())));
-  }
+  public static class GenericResult {
+    public boolean success;
+    public String message;
 
-  private static void haltInvalidApiRequest(WsiteResult result) {
-    haltInvalidApiRequest(400, result);
-  }
-
-  private static Object getApiResult(WsiteResult result) {
-    if (result == WsiteResult.SUCCESS) {
-      return JsonUtils.toJson(new ApiGenericResult(true, result.toString()));
+    public GenericResult(boolean success, String message) {
+      this.success = success;
+      this.message = message;
     }
-    haltInvalidApiRequest(result);
+
+    public GenericResult(Exception e) {
+      this(false, Utils.stacktraceToString(e));
+    }
+
+    public GenericResult() {
+      this(true, null);
+    }
+  }
+
+  public static class ExistsResult {
+    public boolean success;
+    public boolean exists;
+
+    public ExistsResult(boolean success, boolean exists) {
+      this.success = success;
+      this.exists = exists;
+    }
+
+    public ExistsResult() {
+    }
+  }
+
+  private static void haltInvalidRequest(int status, WsiteResult result) {
+    Spark.halt(status, JsonUtils.toJson(new GenericResult(false, result.toString())));
+  }
+
+  private static void haltInvalidRequest(WsiteResult result) {
+    haltInvalidRequest(400, result);
+  }
+
+  private static Object formResult(WsiteResult result) {
+    if (result == WsiteResult.SUCCESS) {
+      return JsonUtils.toJson(new GenericResult(true, result.toString()));
+    }
+    haltInvalidRequest(result);
     return null;
   }
 
@@ -85,7 +114,7 @@ public class ApiRoutes {
     if (params.hasKey(KEY_PORT)) {
       int port = HttpUtils.getInt(params, KEY_PORT, -1);
       if (port == -1) {
-        haltInvalidApiRequest(WsiteResult.CONFIG_INVALID_PORT);
+        haltInvalidRequest(WsiteResult.CONFIG_INVALID_PORT);
       }
       cfg.put(KEY_PORT, port);
     }
@@ -97,7 +126,7 @@ public class ApiRoutes {
       try {
         Pattern.compile(usernamePattern);
       } catch (PatternSyntaxException e) {
-        haltInvalidApiRequest(WsiteResult.CONFIG_INVALID_USERNAME_PATTERN);
+        haltInvalidRequest(WsiteResult.CONFIG_INVALID_USERNAME_PATTERN);
       }
       cfg.put(KEY_USERNAME_PATTERN, usernamePattern);
     }
@@ -106,7 +135,7 @@ public class ApiRoutes {
       try {
         Pattern.compile(passwordPattern);
       } catch (PatternSyntaxException e) {
-        haltInvalidApiRequest(WsiteResult.CONFIG_INVALID_PASSWORD_PATTERN);
+        haltInvalidRequest(WsiteResult.CONFIG_INVALID_PASSWORD_PATTERN);
       }
       cfg.put(KEY_PASSWORD_PATTERN, passwordPattern);
     }
@@ -136,12 +165,12 @@ public class ApiRoutes {
         Path output = HttpUtils.copyFile(request, KEY_KEYSTORE_FILE, secureDir, true);
         if (output == null) {
           wsite.getLogger().error("Received keystore file not encoded in multipart format");
-          haltInvalidApiRequest(WsiteResult.CONFIG_INVALID_KEYSTORE);
+          haltInvalidRequest(WsiteResult.CONFIG_INVALID_KEYSTORE);
         }
         cfg.put(KEY_KEYSTORE_FILE, output.toString());
       } catch (IOException | ServletException e) {
         wsite.getLogger().error("Could not copy keystore file", e);
-        haltInvalidApiRequest(WsiteResult.CONFIG_INVALID_KEYSTORE);
+        haltInvalidRequest(WsiteResult.CONFIG_INVALID_KEYSTORE);
       }
     } else if (params.hasKey("keystoreString")) {
       String keystoreString = HttpUtils.getString(params, "keystoreString");
@@ -151,7 +180,7 @@ public class ApiRoutes {
         cfg.put(KEY_KEYSTORE_FILE, output.toString());
       } catch (IOException e) {
         wsite.getLogger().error("Could not decode base64-encoded keystore string", e);
-        haltInvalidApiRequest(WsiteResult.CONFIG_INVALID_KEYSTORE);
+        haltInvalidRequest(WsiteResult.CONFIG_INVALID_KEYSTORE);
       }
     }
     if (params.hasKey(KEY_KEYSTORE_PASSWORD)) {
@@ -162,12 +191,12 @@ public class ApiRoutes {
         Path output = HttpUtils.copyFile(request, KEY_TRUSTSTORE_FILE, secureDir, true);
         if (output == null) {
           wsite.getLogger().error("Received truststore file not encoded in multipart form");
-          haltInvalidApiRequest(WsiteResult.CONFIG_INVALID_TRUSTSTORE);
+          haltInvalidRequest(WsiteResult.CONFIG_INVALID_TRUSTSTORE);
         }
         cfg.put(KEY_TRUSTSTORE_FILE, output.toString());
       } catch (ServletException | IOException e) {
         wsite.getLogger().error("Could not copy truststore file", e);
-        haltInvalidApiRequest(WsiteResult.CONFIG_INVALID_TRUSTSTORE);
+        haltInvalidRequest(WsiteResult.CONFIG_INVALID_TRUSTSTORE);
       }
     } else if (params.hasKey("truststoreString")) {
       String str = HttpUtils.getString(params, "truststoreString");
@@ -177,7 +206,7 @@ public class ApiRoutes {
         cfg.put(KEY_TRUSTSTORE_FILE, output.toString());
       } catch (IOException | IllegalArgumentException e) {
         wsite.getLogger().error("Could not write truststore string", e);
-        haltInvalidApiRequest(WsiteResult.CONFIG_INVALID_TRUSTSTORE);
+        haltInvalidRequest(WsiteResult.CONFIG_INVALID_TRUSTSTORE);
       }
     }
     if (params.hasKey(KEY_TRUSTSTORE_PASSWORD)) {
@@ -204,14 +233,14 @@ public class ApiRoutes {
   private static void checkPermission(WsiteService wsite, Request request) {
     String token = HttpUtils.getString(request.queryMap(), "token");
     if (token == null) {
-      haltInvalidApiRequest(WsiteResult.NO_TOKEN);
+      haltInvalidRequest(WsiteResult.NO_TOKEN);
     }
     User user = wsite.getUserFromLoginToken(token);
     if (user == null) {
-      haltInvalidApiRequest(WsiteResult.LOGIN_TOKEN_NOT_FOUND);
+      haltInvalidRequest(WsiteResult.LOGIN_TOKEN_NOT_FOUND);
     }
     if (!user.operator) {
-      haltInvalidApiRequest(WsiteResult.UNAUTHORIZED);
+      haltInvalidRequest(WsiteResult.UNAUTHORIZED);
     }
   }
 
@@ -229,7 +258,7 @@ public class ApiRoutes {
         throw e;
       } catch (Exception e) {
         wsite.getLogger().error("An exception occurred trying to handle an API request", e);
-        return JsonUtils.toJson(new ApiGenericResult(false, Utils.stacktraceToString(e)));
+        return JsonUtils.toJson(new GenericResult(false, Utils.stacktraceToString(e)));
       }
     }
     protected abstract Object handle_do(Request request, Response response, WsiteService wsite) throws Exception;
@@ -244,7 +273,7 @@ public class ApiRoutes {
     @Override
     protected Object handle_do(Request request, Response response, WsiteService wsite) {
       checkPermission(wsite, request);
-      return getApiResult(createPage(request, wsite));
+      return formResult(createPage(request, wsite));
     }
   }
 
@@ -258,7 +287,7 @@ public class ApiRoutes {
     @Override
     protected Object handle_do(Request request, Response response, WsiteService wsite) {
       checkPermission(wsite, request);
-      return getApiResult(updatePage(wsite, request));
+      return formResult(updatePage(wsite, request));
     }
   }
 
@@ -270,8 +299,9 @@ public class ApiRoutes {
       boolean noContents = HttpUtils.getBool(request.queryMap(), noContentsField);
       Page page = wsite.getPage(path);
       if (page == null) {
-        haltInvalidApiRequest(WsiteResult.PAGE_PATH_NOT_FOUND);
+        haltInvalidRequest(WsiteResult.PAGE_PATH_NOT_FOUND);
       }
+      page.contents = Utils.encodeBase64(page.contents);
       return page;
     }
     public static Page getPage(WsiteService wsite, Request request) {
@@ -300,7 +330,7 @@ public class ApiRoutes {
     @Override
     protected Object handle_do(Request request, Response response, WsiteService wsite) {
       checkPermission(wsite, request);
-      return getApiResult(deletePage(wsite, request));
+      return formResult(deletePage(wsite, request));
     }
   }
 
@@ -318,7 +348,7 @@ public class ApiRoutes {
     @Override
     protected Object handle_do(Request request, Response response, WsiteService wsite) {
       checkPermission(wsite, request);
-      return getApiResult(createUser(wsite, request));
+      return formResult(createUser(wsite, request));
     }
   }
 
@@ -332,7 +362,7 @@ public class ApiRoutes {
       QueryParamsMap params = request.queryMap();
       UUID id = HttpUtils.getUuid(params, "id");
       String username = HttpUtils.getString(params, "username");
-      return getApiResult(wsite.updateUserUsername(id, username));
+      return formResult(wsite.updateUserUsername(id, username));
     }
   }
 
@@ -346,7 +376,7 @@ public class ApiRoutes {
       QueryParamsMap params = request.queryMap();
       UUID id = HttpUtils.getUuid(params, "id");
       String emailAddress = HttpUtils.getString(params, "email");
-      return getApiResult(wsite.updateUserEmailAddress(id, emailAddress));
+      return formResult(wsite.updateUserEmailAddress(id, emailAddress));
     }
   }
 
@@ -360,7 +390,7 @@ public class ApiRoutes {
       QueryParamsMap params = request.queryMap();
       UUID id = HttpUtils.getUuid(params, "id");
       char[] password = HttpUtils.getString(params, "password").toCharArray();
-      return getApiResult(wsite.updateUserPassword(id, password));
+      return formResult(wsite.updateUserPassword(id, password));
     }
   }
 
@@ -374,7 +404,7 @@ public class ApiRoutes {
       QueryParamsMap params = request.queryMap();
       UUID id = HttpUtils.getUuid(params, "id");
       boolean operator = HttpUtils.getBool(params, "operator");
-      return getApiResult(wsite.updateUserOperator(id, operator));
+      return formResult(wsite.updateUserOperator(id, operator));
     }
   }
 
@@ -392,7 +422,7 @@ public class ApiRoutes {
     @Override
     protected Object handle_do(Request request, Response response, WsiteService wsite) {
       checkPermission(wsite, request);
-      return getApiResult(deleteUser(wsite, request));
+      return formResult(deleteUser(wsite, request));
     }
   }
 
@@ -416,7 +446,7 @@ public class ApiRoutes {
         user = wsite.getUserFromEmailAddress(emailAddress);
       }
       if (user == null) {
-        haltInvalidApiRequest(WsiteResult.USER_INVALID_QUERY);
+        haltInvalidRequest(WsiteResult.USER_INVALID_QUERY);
       }
       return user;
     }
@@ -446,9 +476,9 @@ public class ApiRoutes {
     protected Object handle_do(Request request, Response response, WsiteService wsite) {
       Pair<WsiteResult, String> res = createLogin(wsite, request);
       if (res.left == WsiteResult.SUCCESS) {
-        return JsonUtils.toJson(new ApiGenericResult(true, res.right));
+        return JsonUtils.toJson(new GenericResult(true, res.right));
       }
-      return JsonUtils.toJson(new ApiGenericResult(false, res.left.toString()));
+      return JsonUtils.toJson(new GenericResult(false, res.left.toString()));
     }
   }
 
@@ -460,7 +490,7 @@ public class ApiRoutes {
     protected Object handle_do(Request request, Response response, WsiteService wsite) {
       // TODO: Is this secure? Maybe rely on an API key instead?
       String token = HttpUtils.getString(request.queryMap(), "token");
-      return getApiResult(wsite.deleteLogin(token));
+      return formResult(wsite.deleteLogin(token));
     }
   }
 
@@ -497,6 +527,21 @@ public class ApiRoutes {
     }
   }
 
+  public static class EditAssetRoute extends WsiteApiRoute {
+    public EditAssetRoute(WsiteService wsite) {
+      super(wsite);
+    }
+    @Override
+    protected Object handle_do(Request request, Response response, WsiteService wsite) throws Exception {
+      checkPermission(wsite, request);
+      QueryParamsMap params = request.queryMap();
+      String origPath = HttpUtils.getString(params, "origPath");
+      String path = HttpUtils.getString(params, "path");
+      byte[] contents = HttpUtils.getBase64EncodedBytes(params, "contents");
+      return wsite.editAsset(origPath == null ? path : origPath, path, contents);
+    }
+  }
+
   public static class DeleteAssetRoute extends WsiteApiRoute {
     public DeleteAssetRoute(WsiteService wsite) {
       super(wsite);
@@ -506,6 +551,78 @@ public class ApiRoutes {
       checkPermission(wsite, request);
       String path = HttpUtils.getString(request.queryMap(), "path");
       return wsite.deleteAsset(path);
+    }
+  }
+
+  public static class GetAssetRoute extends WsiteApiRoute {
+    public static class Asset {
+      public String path;
+      public String contents;
+      public Asset() {
+      }
+      public Asset(String path, String contents) {
+        this.path = path;
+        this.contents = contents;
+      }
+    }
+    public GetAssetRoute(WsiteService wsite) {
+      super(wsite);
+    }
+    @Override
+    protected Object handle_do(Request request, Response response, WsiteService wsite) throws Exception {
+      QueryParamsMap params = request.queryMap();
+      String path = HttpUtils.getString(params, "path");
+      if (path == null) {
+        haltInvalidRequest(WsiteResult.ASSET_NO_PATH);
+      }
+      try (InputStream in = wsite.getAssetStream(path)) {
+        if (in != null) {
+          byte[] contents = IOUtils.readBytesFromStream(in);
+          return new Asset(path, Base64.getEncoder().encodeToString(contents));
+        }
+      }
+      haltInvalidRequest(WsiteResult.ASSET_PATH_NOT_FOUND);
+      return null;
+    }
+  }
+
+  public static class UserExistsRoute extends WsiteApiRoute {
+    public UserExistsRoute(WsiteService wsite) {
+      super(wsite);
+    }
+    @Override
+    protected Object handle_do(Request request, Response response, WsiteService wsite) throws Exception {
+      QueryParamsMap params = request.queryMap();
+      UUID id = HttpUtils.getUuid(params, "id");
+      if (id != null) {
+        return new ExistsResult(true, wsite.getUserFromId(id) != null);
+      }
+      String username = HttpUtils.getString(params, "username");
+      if (username != null) {
+        return new ExistsResult(true, wsite.getUserFromUsername(username) != null);
+      }
+      String email = HttpUtils.getString(params, "email");
+      if (email != null) {
+        return new ExistsResult(true, wsite.getUserFromEmailAddress(email) != null);
+      }
+      haltInvalidRequest(WsiteResult.USER_NO_VALID_CHECK_FIELDS);
+      return null;
+    }
+  }
+
+  public static class PageExistsRoute extends WsiteApiRoute {
+    public PageExistsRoute(WsiteService wsite) {
+      super(wsite);
+    }
+    @Override
+    protected Object handle_do(Request request, Response response, WsiteService wsite) throws Exception {
+      QueryParamsMap params = request.queryMap();
+      String path = HttpUtils.getString(params, "path");
+      if (path != null) {
+        return new ExistsResult(true, wsite.getPage(path) != null);
+      }
+      haltInvalidRequest(WsiteResult.PAGE_PATH_MISSING);
+      return null;
     }
   }
 
@@ -528,10 +645,9 @@ public class ApiRoutes {
     @Override
     protected Object handle_do(Request request, Response response, WsiteService wsite) {
       checkPermission(wsite, request);
-      setupMultipartEncoding(wsite, request);
       Map<String, Object> cfg = getConfig(wsite, request);
       wsite.restartWithNewConfiguration(cfg);
-      return getApiResult(WsiteResult.SUCCESS);
+      return formResult(WsiteResult.SUCCESS);
     }
   }
 

@@ -10,6 +10,7 @@ import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.util.Base64;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -128,6 +129,14 @@ public class HttpUtils {
       return part.getInputStream();
     }
     return null;
+  }
+
+  public static byte[] getBase64EncodedBytes(QueryParamsMap params, String key) {
+    String str = getString(params, key);
+    if (str == null) {
+      return null;
+    }
+    return Base64.getDecoder().decode(str);
   }
 
   public static Path copyFile(Request request, String key, Path output, boolean isDir) throws IOException, ServletException {

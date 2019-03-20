@@ -19,11 +19,13 @@ Run `./gradlew run`. The service will use `./rundir` as the working directory.
 * Submit the form, and the server will restart with the standard routes
 * Login at `/login` (logout at `/logout`)
 * Every route prefixed with `/control` will require an operator to be logged in.
-* Create / delete assets at `/control/createAsset` / `/control/deleteAsset`, publicly accessible at `/assets/<path>`
+* Upload / delete assets at `/control/uploadAsset` / `/control/deleteAsset`, publicly accessible at `/assets/<path>`
 * Create / delete pages at `/control/createPage` / `/control/deletePage`
 * Create / delete users at `/control/createUser` / `control/deleteUser` (you can't delete yourself)
 * Configure settings at `/control/configSite` / `/control/configDatabase` / `/control/configSsl` (not used) / 
 `/control/configSmtp` (not used)
+* Edit stuff at `/control/edit<Asset|Page|User>`
+* Edit your own user information at `/profile/edit`
 * Shutdown / restart the server at `/control/shutdown` / `/control/restart`
 
 That's all for now. Come back later for more updates...

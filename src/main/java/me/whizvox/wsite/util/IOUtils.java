@@ -54,6 +54,14 @@ public class IOUtils {
     }
   }
 
+  public static boolean doesFileExist(Path path) {
+    return Files.exists(path) && Files.isRegularFile(path);
+  }
+
+  public static boolean doesDirectoryExist(Path path) {
+    return Files.exists(path) && Files.isDirectory(path);
+  }
+
   public static URL getResource(String path) {
     return IOUtils.class.getClassLoader().getResource(path);
   }
@@ -80,7 +88,7 @@ public class IOUtils {
     return true;
   }
 
-  public static String readStringFromStream(InputStream in) throws IOException {
+  public static byte[] readBytesFromStream(InputStream in) throws IOException {
     ByteArrayOutputStream out = new ByteArrayOutputStream();
     final int BUFFER_SIZE = 1024;
     byte[] buffer = new byte[BUFFER_SIZE];
@@ -88,7 +96,11 @@ public class IOUtils {
     while ((read = in.read(buffer)) != -1) {
       out.write(buffer, 0, read);
     }
-    return new String(out.toByteArray(), StandardCharsets.UTF_8);
+    return out.toByteArray();
+  }
+
+  public static String readStringFromStream(InputStream in) throws IOException {
+    return new String(readBytesFromStream(in), StandardCharsets.UTF_8);
   }
 
   public static String readStringFromFile(Path input) throws IOException {

@@ -17,15 +17,15 @@
 
 <#macro userFormBase doingSetup>
 <label for="userUsername">Username</label>
-<input type="text" id="userUsername" name="username" onchange="checkUsernameAvailable()"><br>
+<input type="text" id="userUsername" name="username" oninput="checkUsernameAvailable()"><br>
 <label for="userEmail">Email address</label>
-<input type="email" id="userEmail" name="email" onchange="confirmUserEmail(); checkEmailAvailable()"><br>
-<label for="userConfirmEmailAddress">Confirm email address</label>
-<input type="email" id="userConfirmEmailAddress" name="confirmEmail" onchange="confirmUserEmail()"><br>
+<input type="email" id="userEmail" name="email" oninput="confirmUserEmail(); checkEmailAvailable()"><br>
+<label for="userConfirmEmail">Confirm email address</label>
+<input type="email" id="userConfirmEmail" name="confirmEmail" oninput="confirmUserEmail()"><br>
 <label for="userPassword">Password</label>
-<input type="password" id="userPassword" name="password" onchange="confirmUserPassword()"><br>
+<input type="password" id="userPassword" name="password" oninput="confirmUserPassword()"><br>
 <label for="userConfirmPassword">Confirm password</label>
-<input type="password" id="userConfirmPassword" name="confirmPassword" onchange="confirmUserPassword()"><br>
+<input type="password" id="userConfirmPassword" name="confirmPassword" oninput="confirmUserPassword()"><br>
 <#if !doingSetup>
 <label for="userOperator">Operator</label>
 <input type="checkbox" id="userOperator" name="operator" value="true"><br>
@@ -34,23 +34,23 @@
 </#if>
 </#macro>
 
-<#macro pageFormBase formName>
+<#macro pageFormBase formName invalidIfExists>
 <label for="path">Path</label>
-<input id="path" name="path"><br>
+<input id="path" name="path" onchange="checkPathAvailable(${invalidIfExists?c})"><br>
 <label for="title">Title</label>
 <input id="title" name="title"><br>
 <label for="syntax">Syntax</label>
-<select form="editPage" id="syntax" name="syntax">
-  <option value="markdown">Markdown</option>
-  <option value="embedded">Embedded Plain Text</option>
-  <option value="html_limited_embedded">Embedded Limited HTML</option>
-  <option value="html_embedded">Embedded Raw HTML</option>
-  <option value="plain">Plain Text</option>
-  <option value="html_limited">Limited HTML</option>
-  <option value="html">Raw HTML</option>
+<select form="${formName}" id="syntax" name="syntax">
+  <option value="MARKDOWN">Markdown</option>
+  <option value="EMBEDDED">Embedded Plain Text</option>
+  <option value="HTML_LIMITED_EMBEDDED">Embedded Limited HTML</option>
+  <option value="HTML_EMBEDDED">Embedded Raw HTML</option>
+  <option value="PLAIN">Plain Text</option>
+  <option value="HTML_LIMITED">Limited HTML</option>
+  <option value="HTML">Raw HTML</option>
 </select><br>
 <label for="contents">Contents</label>
-<textarea form="${formName}" id="contents" name="contents" rows="50" cols="100"></textarea><br>
+<textarea form="${formName}" id="contents" name="contents" rows="30" cols="100"></textarea><br>
 </#macro>
 
 <#macro siteConfigFormBase config>

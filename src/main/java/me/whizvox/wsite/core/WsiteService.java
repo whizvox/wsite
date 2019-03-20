@@ -22,18 +22,13 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.CharBuffer;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
+import java.nio.file.*;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.time.*;
 import java.time.temporal.ChronoUnit;
-import java.util.Arrays;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.UUID;
+import java.util.*;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -54,6 +49,7 @@ public class WsiteService implements Runnable {
   private UserRepository userRepo;
   private LoginRepository loginRepo;
   private TemplateEngine templateEngine;
+  private List<String> protectedAssets;
 
   private Pattern usernamePattern;
   private Pattern passwordPattern;
@@ -72,6 +68,7 @@ public class WsiteService implements Runnable {
     shouldShutdown = false;
     eventManager = new EventManager();
     newConfig = new HashMap<>();
+    protectedAssets = new ArrayList<>();
   }
 
   public String getSiteName() {
@@ -165,12 +162,12 @@ public class WsiteService implements Runnable {
     if (username == null || !Utils.checkUsername(username)) {
       return WsiteResult.USER_INVALID_USERNAME;
     }
+    if (user.username.equals(username)) {
+      return WsiteResult.USER_USERNAME_NOT_CHANGED;
+    }
     User uCheck = userRepo.selectFromUsername(username);
     if (uCheck != null) {
       return WsiteResult.USER_USERNAME_CONFLICT;
-    }
-    if (user.username.equals(username)) {
-      return WsiteResult.USER_USERNAME_NOT_CHANGED;
     }
     logger.info("Updating username of user id {} and username {} to {}", user.id, user.username, username);
     user.username = username;
@@ -186,12 +183,12 @@ public class WsiteService implements Runnable {
     if (emailAddress == null || !Utils.checkEmailAddress(emailAddress)) {
       return WsiteResult.USER_INVALID_EMAIL_ADDRESS;
     }
+    if (user.emailAddress.equals(emailAddress)) {
+      return WsiteResult.USER_EMAIL_ADDRESS_NOT_CHANGED;
+    }
     User uCheck = userRepo.selectFromEmailAddress(emailAddress);
     if (uCheck != null) {
       return WsiteResult.USER_EMAIL_ADDRESS_CONFLICT;
-    }
-    if (user.emailAddress.equals(emailAddress)) {
-      return WsiteResult.USER_EMAIL_ADDRESS_NOT_CHANGED;
     }
     logger.info("Updating email address of user id {} and username {} to {} from {}",
         user.id, user.username, emailAddress, user.emailAddress);
@@ -232,6 +229,28 @@ public class WsiteService implements Runnable {
     logger.info("Updating user's operator status to {} with id {} and username {}",
         user.operator, user.id, user.username);
     userRepo.update(user);
+    return WsiteResult.SUCCESS;
+  }
+
+  public WsiteResult updateUser(UUID id, String username, String email, char[] password, boolean operator) {
+    WsiteResult usernameRes = updateUserUsername(id, username);
+    if (usernameRes != WsiteResult.SUCCESS && usernameRes != WsiteResult.USER_USERNAME_NOT_CHANGED) {
+      return usernameRes;
+    }
+    WsiteResult emailRes = updateUserEmailAddress(id, email);
+    if (emailRes != WsiteResult.SUCCESS && emailRes != WsiteResult.USER_EMAIL_ADDRESS_NOT_CHANGED) {
+      return emailRes;
+    }
+    if (password != null && password.length > 0) {
+      WsiteResult passwordRes = updateUserPassword(id, password);
+      if (passwordRes != WsiteResult.SUCCESS && passwordRes != WsiteResult.USER_PASSWORD_NOT_CHANGED) {
+        return passwordRes;
+      }
+    }
+    WsiteResult operatorRes = updateUserOperator(id, operator);
+    if (operatorRes != WsiteResult.SUCCESS && operatorRes != WsiteResult.USER_OPERATOR_NOT_CHANGED) {
+      return operatorRes;
+    }
     return WsiteResult.SUCCESS;
   }
 
@@ -361,16 +380,18 @@ public class WsiteService implements Runnable {
     if (origPath == null || page.path == null) {
       return WsiteResult.PAGE_INVALID_PATH;
     }
-    Page checkPage = pageRepo.selectFromPath(page.path);
-    if (checkPage != null) {
-      return WsiteResult.PAGE_PATH_CONFLICT;
-    }
     Page oldPage = pageRepo.selectFromPath(origPath);
     if (oldPage == null) {
       return WsiteResult.PAGE_PATH_NOT_FOUND;
     }
     Page newPage = preparePage(page);
+    newPage.published = oldPage.published;
+    newPage.lastEdited = Instant.now();
     if (!page.path.equalsIgnoreCase(origPath)) {
+      Page checkPage = pageRepo.selectFromPath(page.path);
+      if (checkPage != null) {
+        return WsiteResult.PAGE_PATH_CONFLICT;
+      }
       logger.info("Updating page {} to {}...", origPath, newPage.path);
       pageRepo.delete(origPath);
       pageRepo.insert(newPage);
@@ -405,9 +426,9 @@ public class WsiteService implements Runnable {
     }
     Path outputFile = resolvePath(Reference.ASSETS_DIR).resolve(path);
     if (!replaceExisting && Files.exists(outputFile)) {
-      return WsiteResult.ASSET_FILE_ALREADY_EXISTS;
+      return WsiteResult.ASSET_PATH_CONFLICT;
     }
-    logger.info("Creating new asset at {}...", path);
+    logger.info("Creating new asset at <{}>...", path);
     IOUtils.mkdirs(outputFile.getParent());
     if (input == null) {
       IOUtils.touch(outputFile);
@@ -417,20 +438,63 @@ public class WsiteService implements Runnable {
     return WsiteResult.SUCCESS;
   }
 
+  private Path getAssetPath(String basePath) {
+    return resolvePath(Reference.ASSETS_DIR).resolve(basePath);
+  }
+
+  public WsiteResult editAsset(String origPath, String newPath, byte[] contents) throws IOException {
+    if (isAssetProtected(origPath)) {
+      return WsiteResult.ASSET_CANNOT_MODIFY_PROTECTED;
+    }
+    Path assetFile = getAssetPath(origPath);
+    if (!IOUtils.doesFileExist(assetFile)) {
+      return WsiteResult.ASSET_PATH_NOT_FOUND;
+    }
+    Path newAssetFile = getAssetPath(newPath);
+    if (!Files.isSameFile(assetFile, newAssetFile)) {
+      if (Files.exists(newAssetFile)) {
+        return WsiteResult.ASSET_PATH_CONFLICT;
+      }
+      Files.delete(assetFile);
+      logger.info("Replacing asset <{}> with <{}>...", origPath, newPath);
+    } else {
+      logger.info("Editing asset <{}>...", origPath);
+    }
+    Files.write(newAssetFile, contents, StandardOpenOption.CREATE);
+    return WsiteResult.SUCCESS;
+  }
+
+  public boolean doesAssetExist(String path) {
+    Path assetFile = resolvePath(Reference.ASSETS_DIR).resolve(path);
+    return Files.exists(assetFile) && Files.isRegularFile(assetFile);
+  }
+
+  public InputStream getAssetStream(String path) throws IOException {
+    Path assetFile = resolvePath(Reference.ASSETS_DIR).resolve(path);
+    if (Files.exists(assetFile) && Files.isRegularFile(assetFile)) {
+      return Files.newInputStream(assetFile);
+    }
+    return null;
+  }
+
   public WsiteResult deleteAsset(String path) throws IOException {
     if (Utils.isNullOrEmpty(path)) {
       return WsiteResult.ASSET_NO_PATH;
     }
     Path assetFile = resolvePath(Reference.ASSETS_DIR).resolve(path);
     if (!Files.exists(assetFile)) {
-      return WsiteResult.ASSET_NOT_FOUND;
+      return WsiteResult.ASSET_PATH_NOT_FOUND;
     }
     if (!Files.isRegularFile(assetFile)) {
       return WsiteResult.ASSET_CANNOT_DELETE_NONFILE;
     }
-    logger.info("Deleting asset {}...", path);
+    logger.info("Deleting asset <{}>...", path);
     Files.delete(assetFile);
     return WsiteResult.SUCCESS;
+  }
+
+  public boolean isAssetProtected(String path) {
+    return path != null && protectedAssets.parallelStream().anyMatch(paPath -> paPath.equalsIgnoreCase(path));
   }
 
   public String parseTemplate(String templateName, Object dataModel) {
@@ -546,7 +610,9 @@ public class WsiteService implements Runnable {
 
     Spark.notFound(Routes.generateHaltBody(this, 404));
     Spark.internalServerError(Routes.generateHaltBody(this, 500));
-    Spark.before("/control/*", new Routes.UserFilter(this));
+    Routes.UserFilter userFilter = new Routes.UserFilter(this);
+    Spark.before("/control/*", userFilter);
+    Spark.before("/profile/*", userFilter);
     Spark.get("/control/shutdown", new Routes.ShutdownRoute(this));
     Spark.get("/control/restart", new Routes.RestartRoute(this));
     Spark.get("/login", Routes.getTemplatedRoute(this, "login.ftlh", false));
@@ -556,7 +622,9 @@ public class WsiteService implements Runnable {
 
     if (getNumberOfUsers() > 0) {
       logger.info("Adding API routes...");
+      Spark.get("/api/asset/fetch", new ApiRoutes.GetAssetRoute(this));
       Spark.post("/api/asset/upload", new ApiRoutes.UploadAssetRoute(this));
+      Spark.post("/api/asset/edit", new ApiRoutes.EditAssetRoute(this));
       Spark.post("/api/asset/delete", new ApiRoutes.DeleteAssetRoute(this));
       Spark.get("/api/user/fetch", new ApiRoutes.UserGetRoute(this));
       Spark.post("/api/user/create", new ApiRoutes.UserCreateRoute(this));
@@ -565,6 +633,8 @@ public class WsiteService implements Runnable {
       Spark.post("/api/user/updatePassword", new ApiRoutes.UserUpdatePasswordRoute(this));
       Spark.post("/api/user/updateOperator", new ApiRoutes.UserUpdateOperatorRoute(this));
       Spark.post("/api/user/delete", new ApiRoutes.UserDeleteRoute(this));
+      Spark.get("/api/user/exists", new ApiRoutes.UserExistsRoute(this));
+      Spark.get("/api/page/exists", new ApiRoutes.PageExistsRoute(this));
       Spark.get("/api/page/fetch", new ApiRoutes.PageGetRoute(this));
       Spark.post("/api/page/create", new ApiRoutes.PageCreateRoute(this));
       Spark.post("/api/page/update", new ApiRoutes.PageUpdateRoute(this));
@@ -577,20 +647,30 @@ public class WsiteService implements Runnable {
       logger.info("Adding standard routes...");
       Spark.get("/control/uploadAsset", Routes.getTemplatedRoute(this, "uploadAsset.ftlh", true));
       Spark.post("/control/uploadAsset", new Routes.UploadAssetPostRoute(this));
+      Spark.get("/control/editAsset", Routes.getTemplatedRoute(this, "editAsset.ftlh", true));
+      Spark.post("/control/editAsset", new Routes.EditAssetPostRoute(this));
       Spark.get("/control/deleteAsset", Routes.getTemplatedRoute(this, "deleteAsset.ftlh", true));
       Spark.post("/control/deleteAsset", new Routes.DeleteAssetPostRoute(this));
-      Spark.get("/control/createPage", Routes.getTemplatedRoute(this, "newPage.ftlh", true));
+      Spark.get("/control/createPage", Routes.getTemplatedRoute(this, "createPage.ftlh", true));
       Spark.post("/control/createPage", new Routes.NewPagePostRoute(this));
+      Spark.get("/control/editPage", Routes.getTemplatedRoute(this, "editPage.ftlh", true));
+      Spark.post("/control/editPage", new Routes.EditPagePostRoute(this));
       Spark.get("/control/deletePage", Routes.getTemplatedRoute(this, "deletePage.ftlh", true));
       Spark.post("/control/deletePage", new Routes.DeletePagePostRoute(this));
-      Spark.get("/control/createUser", Routes.getTemplatedRoute(this, "newUser.ftlh", true));
+      Spark.get("/control/createUser", Routes.getTemplatedRoute(this, "createUser.ftlh", true));
       Spark.post("/control/createUser", new Routes.NewUserPostRoute(this));
+      Spark.get("/profile/edit", Routes.getTemplatedRoute(this, "editSelf.ftlh", false));
+      Spark.post("/control/editSelfUsername", new Routes.EditUserUsernamePostRoute(this));
+      Spark.post("/control/editSelfEmail", new Routes.EditUserEmailPostRoute(this));
+      Spark.post("/control/editSelfPassword", new Routes.EditUserPasswordRoute(this));
+      Spark.get("/control/editUser", Routes.getTemplatedRoute(this, "editUser.ftlh", true));
+      Spark.post("/control/editUser", new Routes.EditUserRoute(this));
       Spark.get("/control/deleteUser", Routes.getTemplatedRoute(this, "deleteUser.ftlh", true));
       Spark.post("/control/deleteUser", new Routes.DeleteUserPostRoute(this));
-      Spark.get("/control/configSite", Routes.getTemplatedRoute(this, "configSite.ftlh", true));
-      Spark.get("/control/configDatabase", Routes.getTemplatedRoute(this, "configDatabase.ftlh", true));
-      Spark.get("/control/configSsl", Routes.getTemplatedRoute(this, "configSsl.ftlh", true));
-      Spark.get("/control/configSmtp", Routes.getTemplatedRoute(this, "configSmtp.ftlh", true));
+      Spark.get("/control/configSite", new Routes.ConfigGetRoute(this, "site"));
+      Spark.get("/control/configDatabase", new Routes.ConfigGetRoute(this, "database"));
+      Spark.get("/control/configSsl", new Routes.ConfigGetRoute(this, "ssl"));
+      Spark.get("/control/configSmtp", new Routes.ConfigGetRoute(this, "smtp"));
       Spark.get("/veryimportant/teapot", new Routes.TeapotRoute(this));
       Spark.get("/:path", new Routes.PageGetRoute(this));
       Spark.get("/", new Routes.IndexPageRoute(this, config.indexPage));
@@ -731,12 +811,14 @@ public class WsiteService implements Runnable {
     public Logger logger;
     public HashManager hashManager;
     public TemplateEngine templateEngine;
+    public List<String> protectedAssets;
 
     public Builder() {
       config = null;
       logger = null;
       hashManager = null;
       templateEngine = null;
+      protectedAssets = new ArrayList<>();
     }
 
     public Builder setConfig(WsiteConfiguration config) {
@@ -764,6 +846,12 @@ public class WsiteService implements Runnable {
       return this;
     }
 
+    public Builder addProtectedAssets(String first, String... others) {
+      protectedAssets.add(first);
+      Collections.addAll(protectedAssets, others);
+      return this;
+    }
+
     public WsiteService build() throws SQLException {
       if (config == null) {
         config = new WsiteConfiguration();
@@ -782,6 +870,9 @@ public class WsiteService implements Runnable {
         freemarkerConfig.setLocalizedLookup(false);
         templateEngine = new FreeMarkerEngine(freemarkerConfig);
       }
+      if (protectedAssets.isEmpty()) {
+        addProtectedAssets("css/normalize.css", "scripts/wsite.js", "scripts/cookies.min.js");
+      }
 
       WsiteService service = new WsiteService();
       service.config = config;
@@ -789,6 +880,7 @@ public class WsiteService implements Runnable {
       service.rootDir = rootDirectory.toAbsolutePath().normalize();
       service.hashManager = hashManager;
       service.templateEngine = templateEngine;
+      service.protectedAssets.addAll(protectedAssets);
       return service;
     }
   }
