@@ -4,6 +4,7 @@
   <head>
     <title>${title} // ${siteName}</title>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
     <link rel="stylesheet" type="text/css" href="/assets/css/normalize.css">
     <link rel="stylesheet" type="text/css" href="/assets/css/main.css">
     <script src="/assets/scripts/cookies.min.js"></script>
@@ -34,9 +35,9 @@
 </#if>
 </#macro>
 
-<#macro pageFormBase formName invalidIfExists>
+<#macro pageFormBase formName validIfExists>
 <label for="path">Path</label>
-<input id="path" name="path" onchange="checkPathAvailable(${invalidIfExists?c})"><br>
+<input id="path" name="path" onchange="checkPathAvailable(${validIfExists?c})"><br>
 <label for="title">Title</label>
 <input id="title" name="title"><br>
 <label for="syntax">Syntax</label>

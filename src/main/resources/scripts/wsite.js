@@ -11,6 +11,18 @@ function getSubmitButton() {
   return elements[0];
 }
 
+function scrollToBottom(e) {
+  e.scrollTop = e.scrollHeight - e.clientHeight;
+}
+
+function insertTextAndAutoScroll(e, text) {
+  var isScrolledToBottom = e.scrollHeight - e.clientHeight <= e.scrollTop + 1;
+  e.insertAdjacentHTML("beforeend", text);
+  if (isScrolledToBottom) {
+    scrollToBottom(e);
+  }
+}
+
 function toggleSubmit(d) {
   var submitBtn = getSubmitButton();
   submitBtn.disabled = d;
@@ -108,20 +120,20 @@ function checkEmailAvailable() {
   });
 }
 
-function checkPathAvailable(invalidIfExists) {
+function checkPathAvailable(validIfExists) {
   var ePath = $("path");
   var data = new FormData();
   data.append("path", ePath.value);
   handleAsyncJsonRequest("/api/page/exists", data, function(res) {
     if (res.success) {
-      if (invalidIfExists) {
-        if (!res.exists) {
+      if (validIfExists) {
+        if (res.exists) {
           ePath.setCustomValidity("");
         } else {
           ePath.setCustomValidity("That path is already being used");
         }
       } else {
-        if (res.exists) {
+        if (!res.exists) {
           ePath.setCustomValidity("");
         } else {
           ePath.setCustomValidity("That path could not be found");

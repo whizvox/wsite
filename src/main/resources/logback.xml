@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+  <property name="encoderPattern" value="%d{yyyy/MM/dd-kk:mm:ss} [%thread] %level %logger{36} - %msg%n" />
+  <timestamp key="ts" datePattern="yyyyMMdd-kkmmss"/>
+  <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
+    <encoder class="ch.qos.logback.classic.encoder.PatternLayoutEncoder">
+      <Pattern>${encoderPattern}</Pattern>
+    </encoder>
+  </appender>
+  <appender name="FILE" class="ch.qos.logback.core.FileAppender">
+    <encoder class="ch.qos.logback.classic.encoder.PatternLayoutEncoder">
+      <Pattern>${encoderPattern}</Pattern>
+    </encoder>
+    <file>${wsite.rootDirectory}/logs/${ts}.log</file>
+  </appender>
+  <appender name="VIEWLOG" class="me.whizvox.wsite.core.WsiteLogbackAppender">
+    <encoder class="ch.qos.logback.classic.encoder.PatternLayoutEncoder">
+      <Pattern>${encoderPattern}</Pattern>
+    </encoder>
+  </appender>
+
+  <logger name="Wsite" level="INFO"/>
+
+  <root level="INFO">
+    <appender-ref ref="STDOUT" />
+    <appender-ref ref="FILE" />
+    <appender-ref ref="VIEWLOG" />
+  </root>
+</configuration>

@@ -1,3 +1,11 @@
+1.1.2-alpha-5
+- Logging now done with Logback instead of slf4j-simplelogger
+- A real-time log can be viewed via /control/console
+- Logging is now saved to a file in ./logs
+- Paths can now have forward slashes in them
+- Creating a new page now properly checks path availability
+- Version naming is now more flexible
+
 1.1.1-alpha-4
 - Assets, pages, and users can now be edited without deleting and creating new ones
 - Logged-in users can edit their own settings
@@ -9,7 +17,6 @@
 - Now possible to upload and delete assets
 
 1.0.1-alpha-2
-
 - Site settings are loaded before creation and saved between shutdowns
 - Site, database, SSL, and SMTP settings are remotely configurable outside setup routine
 - Root directory is no longer configurable, now handled by launcher
@@ -18,7 +25,6 @@
 - Most configuration values are checked before applying
 
 1.0.0-alpha-1
-
 - Add setup route when first initializing
 - Add basic user creation/deletion
 - Add basic page creation/deletion with syntax selection

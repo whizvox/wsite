@@ -3,16 +3,22 @@ package me.whizvox.wsite.core;
 import me.whizvox.wsite.database.Page;
 import me.whizvox.wsite.database.User;
 import me.whizvox.wsite.util.HttpUtils;
+import me.whizvox.wsite.util.JsonUtils;
 import me.whizvox.wsite.util.Pair;
 import me.whizvox.wsite.util.Utils;
+import org.eclipse.jetty.websocket.api.Session;
+import org.eclipse.jetty.websocket.api.annotations.OnWebSocketClose;
+import org.eclipse.jetty.websocket.api.annotations.OnWebSocketConnect;
+import org.eclipse.jetty.websocket.api.annotations.WebSocket;
 import spark.*;
 
 import javax.servlet.MultipartConfigElement;
+import java.io.IOException;
 import java.io.InputStream;
+import java.net.HttpCookie;
 import java.nio.charset.StandardCharsets;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.UUID;
+import java.util.*;
+import java.util.concurrent.ConcurrentLinkedQueue;
 
 import static spark.Spark.halt;
 
@@ -171,7 +177,12 @@ public class Routes {
     }
     @Override
     public Object handle_do(Request request, Response response, WsiteService wsite) throws Exception {
-      return getPage(wsite, request, request.params(":path"));
+      String page = request.splat()[0];
+      // TODO: Once/if control page routes are configurable, find a way to incorporate it here
+      if (page.equals("control/wsconsole")) {
+        return null;
+      }
+      return getPage(wsite, request, request.splat()[0]);
     }
   }
 
@@ -415,6 +426,63 @@ public class Routes {
       checkUserPermission(wsite, request);
       String path = HttpUtils.getString(request.queryMap(), "path");
       return wsite.deleteAsset(path);
+    }
+  }
+
+  @WebSocket
+  public static class ConsoleRoute {
+    private Queue<Session> sessions;
+    private WsiteService wsite;
+    public ConsoleRoute(WsiteService wsite) {
+      this.wsite = wsite;
+      sessions = new ConcurrentLinkedQueue<>();
+    }
+    private boolean checkPermission(Session session) {
+      List<HttpCookie> cookies = session.getUpgradeRequest().getCookies();
+      HttpCookie loginCookie = cookies.stream()
+          .filter(cookie -> cookie.getName().equals(UserFilter.COOKIE_LOGIN_TOKEN))
+          .findFirst().orElse(null);
+      boolean authorized = false;
+      if (loginCookie != null) {
+        User user = wsite.getUserFromLoginToken(loginCookie.getValue());
+        authorized = user != null && user.operator;
+      }
+      if (!authorized) {
+        sessions.remove(session);
+        send_do(session, new WsiteLogbackAppender.LogEvent(0, "! UNAUTHORIZED !"));
+        session.close();
+      }
+      return authorized;
+    }
+    private void send_do(Session session, Object msg) {
+      try {
+        session.getRemote().sendString(JsonUtils.toJson(msg));
+      } catch (IOException e) {
+        wsite.getLogger().error("Could not send message to session", e);
+      }
+    }
+    public void send(Session session, Object msg) {
+      if (checkPermission(session)) {
+        send_do(session, msg);
+      }
+    }
+    public void broadcast(Object msg) {
+      sessions.forEach(session -> send(session, msg));
+    }
+    public void disconnectAll() {
+      sessions.forEach(Session::close);
+    }
+    @OnWebSocketConnect
+    public void connected(Session session) {
+      if (checkPermission(session)) {
+        wsite.getLogger().info("Client has connected to the remote console ({})", session.getRemoteAddress().toString());
+        sessions.add(session);
+      }
+    }
+    @OnWebSocketClose
+    public void closed(Session session, int status, String reason) {
+      wsite.getLogger().info("Client disconnected from the remote console ({}, {})", status, reason);
+      sessions.remove(session);
     }
   }
 

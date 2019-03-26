@@ -22,7 +22,10 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.CharBuffer;
-import java.nio.file.*;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.nio.file.StandardOpenOption;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
@@ -60,6 +63,7 @@ public class WsiteService implements Runnable {
   private boolean shouldRestart;
   private boolean shouldShutdown;
 
+  private Routes.ConsoleRoute consoleRoute;
   private ScheduledExecutorService scheduledExecutorService;
 
   private WsiteService() {
@@ -69,6 +73,7 @@ public class WsiteService implements Runnable {
     eventManager = new EventManager();
     newConfig = new HashMap<>();
     protectedAssets = new ArrayList<>();
+    consoleRoute = null;
   }
 
   public String getSiteName() {
@@ -514,12 +519,12 @@ public class WsiteService implements Runnable {
     if (Reference.usingDevBuild()) {
       logger.warn("You are currently using a development build of Wsite. Use at your own risk!");
     } else {
-      logger.warn("Running Wsite version {}", Reference.VERSION);
+      logger.info("Running Wsite version {}", Reference.VERSION);
     }
     logger.info("Build released {}", Reference.RELEASED.atZone(ZoneOffset.UTC));
 
     if (!Files.exists(rootDir)) {
-      logger.warn("Creating root directory...");
+      logger.info("Creating root directory...");
       Files.createDirectories(rootDir);
     }
     IOUtils.mkdirs(resolvePath(Reference.TEMP_DIR));
@@ -532,7 +537,7 @@ public class WsiteService implements Runnable {
     }
 
     if (!newConfig.isEmpty()) {
-      logger.warn("A new configuration has been specified");
+      logger.info("A new configuration has been specified");
       config.loadFromMap(newConfig);
       newConfig.clear();
     }
@@ -585,10 +590,10 @@ public class WsiteService implements Runnable {
     scheduledExecutorService.scheduleWithFixedDelay(() -> {
       int changed = loginRepo.deleteAllExpired();
       if (changed > 0) {
-        logger.warn("Deleted {} expired login credentials", changed);
+        logger.info("Deleted {} expired login credentials", changed);
       }
     }, 0, 1, TimeUnit.MINUTES);
-    logger.info("Login cleanup will commence every 1 minute");
+    logger.info("Login cleanup will commence every minute");
 
     Path staticDir = resolvePath(Reference.STATIC_DIR);
     logger.info("Copying internal resources...");
@@ -603,6 +608,11 @@ public class WsiteService implements Runnable {
     Spark.staticFiles.externalLocation(staticDir.toString());
     logger.info("Setting port to {}...", config.port);
     Spark.port(config.port);
+
+    logger.info("Adding console interface websocket route...");
+    consoleRoute = new Routes.ConsoleRoute(this);
+    Spark.webSocket("/control/wsconsole", consoleRoute);
+    WsiteLogbackAppender.getInstance().setConsoleRoute(consoleRoute);
 
     logger.info("Initializing Spark service...");
     Spark.init();
@@ -645,6 +655,7 @@ public class WsiteService implements Runnable {
       Spark.post("/api/config/update", new ApiRoutes.ConfigUpdateRoute(this));
 
       logger.info("Adding standard routes...");
+      Spark.get("/control/console", Routes.getTemplatedRoute(this, "console.ftlh", true));
       Spark.get("/control/uploadAsset", Routes.getTemplatedRoute(this, "uploadAsset.ftlh", true));
       Spark.post("/control/uploadAsset", new Routes.UploadAssetPostRoute(this));
       Spark.get("/control/editAsset", Routes.getTemplatedRoute(this, "editAsset.ftlh", true));
@@ -672,8 +683,8 @@ public class WsiteService implements Runnable {
       Spark.get("/control/configSsl", new Routes.ConfigGetRoute(this, "ssl"));
       Spark.get("/control/configSmtp", new Routes.ConfigGetRoute(this, "smtp"));
       Spark.get("/veryimportant/teapot", new Routes.TeapotRoute(this));
-      Spark.get("/:path", new Routes.PageGetRoute(this));
       Spark.get("/", new Routes.IndexPageRoute(this, config.indexPage));
+      Spark.get("/*", new Routes.PageGetRoute(this));
     } else {
       // TODO: Include some sort of system where a setup file can instead be used
       logger.warn("No users found. Will instead add setup route...");
@@ -703,6 +714,12 @@ public class WsiteService implements Runnable {
 
   private void destroy_do() throws Exception {
     logger.warn("Destroying Wsite service...");
+
+    if (consoleRoute != null) {
+      consoleRoute.disconnectAll();
+      logger.info("Disconnecting all console websocket sessions...");
+      consoleRoute = null;
+    }
 
     logger.info("Stopping Spark service...");
     Spark.stop();
@@ -737,7 +754,7 @@ public class WsiteService implements Runnable {
     created = false;
     postEvent(new WsiteEvent.Shutdown(this));
 
-    logger.warn("Wsite service has successfully been destroyed");
+    logger.info("Wsite service has successfully been destroyed");
   }
 
   public void destroy() throws Exception {
@@ -782,7 +799,7 @@ public class WsiteService implements Runnable {
           postEvent(new WsiteEvent.Restarting(this));
           destroy();
           create();
-          logger.warn("Wsite service has successfully been restarted");
+          logger.info("Wsite service has successfully been restarted");
         } catch (Exception e) {
           logger.error("Could not restart Wsite service", e);
           run = false;
