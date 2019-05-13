@@ -84,32 +84,29 @@ public class WsiteService implements Runnable {
     return logger;
   }
 
-  public Map<String, Object> getConfigValues(String filter) {
+  public HashManager getHashManager() {
+    return hashManager;
+  }
+
+  public Map<String, Object> getConfigValues() {
     Map<String, Object> values = new HashMap<>();
-    if (filter != null) {
-      switch (filter.toLowerCase()) {
-        case "all":
-          config.getAllValues(values);
-          break;
-        case "site":
-          config.getSiteValues(values);
-          break;
-        case "database":
-          config.getDatabaseValues(values);
-          break;
-        case "ssl":
-          config.getSslValues(values);
-          break;
-        case "smtp":
-          config.getSmtpValues(values);
-          break;
-      }
-    }
+    config.getAllValues(values);
     return values;
   }
 
   public Path resolvePath(String path) {
     return rootDir.resolve(path);
+  }
+
+  public Path getAssetPath(String path, boolean root) {
+    if (root) {
+      return resolvePath(Reference.STATIC_DIR).resolve(path);
+    }
+    return resolvePath(Reference.ASSETS_DIR).resolve(path);
+  }
+
+  public Path toLocalPath(Path path) {
+    return path.subpath(rootDir.getNameCount(), path.getNameCount());
   }
 
   public <T> void registerEventListener(Class<T> eventClass, EventListener<T> listener) {
@@ -285,6 +282,10 @@ public class WsiteService implements Runnable {
     return userRepo.selectNumberOfUsers();
   }
 
+  public List<User> getUsers(int limit, int page, UserRepository.OrderingScheme orderingScheme, boolean descending) {
+    return userRepo.selectAll(limit, page, orderingScheme, descending);
+  }
+
   public WsiteResult createLogin(String query, char[] password, long minutesUntilExpire, String userAgent,
                                  String ipAddress, CharBuffer tokenBuffer) {
     User user;
@@ -425,15 +426,26 @@ public class WsiteService implements Runnable {
     return pageRepo.selectFromPath(path);
   }
 
-  public WsiteResult uploadAsset(String path, InputStream input, boolean replaceExisting) throws IOException {
+  public List<PageRepository.PageSummary> listPages(int limit, int page, PageRepository.OrderingScheme orderingScheme, boolean descending) {
+    return pageRepo.selectList(limit, page, orderingScheme, descending);
+  }
+
+  public int getPageCount() {
+    return pageRepo.getCount();
+  }
+
+  public WsiteResult uploadAsset(String path, InputStream input, boolean replaceExisting, boolean inRoot) throws IOException {
     if (Utils.isNullOrEmpty(path)) {
       return WsiteResult.ASSET_NO_PATH;
     }
-    Path outputFile = resolvePath(Reference.ASSETS_DIR).resolve(path);
+    if (isAssetProtected(path, inRoot)) {
+      return WsiteResult.ASSET_CANNOT_MODIFY_PROTECTED;
+    }
+    Path outputFile = getAssetPath(path, inRoot);
     if (!replaceExisting && Files.exists(outputFile)) {
       return WsiteResult.ASSET_PATH_CONFLICT;
     }
-    logger.info("Creating new asset at <{}>...", path);
+    logger.info("Uploading asset to <{}>...", toLocalPath(outputFile));
     IOUtils.mkdirs(outputFile.getParent());
     if (input == null) {
       IOUtils.touch(outputFile);
@@ -443,63 +455,114 @@ public class WsiteService implements Runnable {
     return WsiteResult.SUCCESS;
   }
 
-  private Path getAssetPath(String basePath) {
-    return resolvePath(Reference.ASSETS_DIR).resolve(basePath);
-  }
-
-  public WsiteResult editAsset(String origPath, String newPath, byte[] contents) throws IOException {
-    if (isAssetProtected(origPath)) {
-      return WsiteResult.ASSET_CANNOT_MODIFY_PROTECTED;
+  public WsiteResult editAsset(String path, boolean root, String newPath, boolean toRoot, byte[] contents) throws IOException {
+    if (Utils.isNullOrEmpty(path)) {
+      return WsiteResult.ASSET_NO_PATH;
     }
-    Path assetFile = getAssetPath(origPath);
-    if (!IOUtils.doesFileExist(assetFile)) {
-      return WsiteResult.ASSET_PATH_NOT_FOUND;
-    }
-    Path newAssetFile = getAssetPath(newPath);
-    if (!Files.isSameFile(assetFile, newAssetFile)) {
+    Path assetFile = getAssetPath(path, root);
+    Path newAssetFile;
+    if (Utils.isNullOrEmpty(newPath)) {
+      newAssetFile = assetFile;
+      if (isAssetProtected(path, root)) {
+        return WsiteResult.ASSET_CANNOT_MODIFY_PROTECTED;
+      }
+    } else {
+      newAssetFile = getAssetPath(newPath, toRoot);
+      if (isAssetProtected(path, root) || isAssetProtected(newPath, toRoot)) {
+        return WsiteResult.ASSET_CANNOT_MODIFY_PROTECTED;
+      }
       if (Files.exists(newAssetFile)) {
         return WsiteResult.ASSET_PATH_CONFLICT;
       }
-      Files.delete(assetFile);
-      logger.info("Replacing asset <{}> with <{}>...", origPath, newPath);
-    } else {
-      logger.info("Editing asset <{}>...", origPath);
     }
-    Files.write(newAssetFile, contents, StandardOpenOption.CREATE);
+    if (!IOUtils.doesFileExist(assetFile)) {
+      return WsiteResult.ASSET_PATH_NOT_FOUND;
+    }
+    if (assetFile == newAssetFile || (Files.exists(newAssetFile) && Files.isSameFile(assetFile, newAssetFile))) {
+      logger.info("Editing asset <{}>", toLocalPath(assetFile));
+      Files.write(assetFile, contents);
+    } else {
+      logger.info("Editing asset <{}>, moving to <{}>", toLocalPath(assetFile), toLocalPath(newAssetFile));
+      Files.delete(assetFile);
+      IOUtils.mkdirs(newAssetFile.getParent());
+      Files.write(newAssetFile, contents, StandardOpenOption.CREATE);
+      IOUtils.cleanupEmptyDirectories(resolvePath(Reference.STATIC_DIR));
+    }
     return WsiteResult.SUCCESS;
   }
 
-  public boolean doesAssetExist(String path) {
-    Path assetFile = resolvePath(Reference.ASSETS_DIR).resolve(path);
-    return Files.exists(assetFile) && Files.isRegularFile(assetFile);
+  public boolean doesAssetExist(String path, boolean root) {
+    Path assetFile = getAssetPath(path, root);
+    return IOUtils.doesFileExist(assetFile);
   }
 
-  public InputStream getAssetStream(String path) throws IOException {
-    Path assetFile = resolvePath(Reference.ASSETS_DIR).resolve(path);
+  public InputStream getAssetStream(String path, boolean root) throws IOException {
+    Path assetFile = getAssetPath(path, root);
     if (Files.exists(assetFile) && Files.isRegularFile(assetFile)) {
       return Files.newInputStream(assetFile);
     }
     return null;
   }
 
-  public WsiteResult deleteAsset(String path) throws IOException {
+  public WsiteResult deleteAsset(String path, boolean root) throws IOException {
     if (Utils.isNullOrEmpty(path)) {
       return WsiteResult.ASSET_NO_PATH;
     }
-    Path assetFile = resolvePath(Reference.ASSETS_DIR).resolve(path);
+    Path assetFile = getAssetPath(path, root);
     if (!Files.exists(assetFile)) {
       return WsiteResult.ASSET_PATH_NOT_FOUND;
+    }
+    if (isAssetProtected(path, root)) {
+      return WsiteResult.ASSET_CANNOT_MODIFY_PROTECTED;
     }
     if (!Files.isRegularFile(assetFile)) {
       return WsiteResult.ASSET_CANNOT_DELETE_NONFILE;
     }
-    logger.info("Deleting asset <{}>...", path);
+    logger.info("Deleting asset from <{}>...", toLocalPath(assetFile));
     Files.delete(assetFile);
+    IOUtils.cleanupEmptyDirectories(resolvePath(Reference.STATIC_DIR));
     return WsiteResult.SUCCESS;
   }
 
-  public boolean isAssetProtected(String path) {
-    return path != null && protectedAssets.parallelStream().anyMatch(paPath -> paPath.equalsIgnoreCase(path));
+  public boolean isAssetProtected(String path, boolean root) {
+    final Path assetPath = getAssetPath(path, root);
+    return path != null && protectedAssets.parallelStream().map(pathStr ->
+        getAssetPath(pathStr, false)).anyMatch(p -> {
+      try {
+        return Files.isSameFile(p, assetPath);
+      } catch (IOException ignored) {}
+      return false;
+    });
+  }
+
+  public List<AssetData> listAssets() {
+    List<AssetData> assets = new ArrayList<>();
+    Path staticDir = resolvePath(Reference.STATIC_DIR);
+    try {
+      Files.walk(staticDir).forEachOrdered(path -> {
+        if (!Files.isDirectory(path) && Files.isRegularFile(path)) {
+          Path assetPath = toLocalPath(path);
+          String pathStr = assetPath.subpath(1, assetPath.getNameCount()).toString();
+          try {
+            // TODO: Setup a proper assets database that tracks upload and edit timestamps
+            assets.add(new AssetData(pathStr, isAssetProtected(pathStr, true), Files.size(path), null, null));
+          } catch (IOException ignored) {}
+        }
+      });
+    } catch (IOException e) {
+      logger.error("Could not grab a list of assets", e);
+      return null;
+    }
+    return assets;
+  }
+
+  public void reloadProtectedAssets() {
+    logger.info("Reloading all protected assets...");
+    // TODO: Is it a good idea to have a script from wsite.js reload that same script?
+    protectedAssets.forEach(path -> {
+      logger.info("Reloading <{}>...", path);
+      IOUtils.copyFromResource(path, getAssetPath(path, false), true);
+    });
   }
 
   public String parseTemplate(String templateName, Object dataModel) {
@@ -539,6 +602,19 @@ public class WsiteService implements Runnable {
     if (!newConfig.isEmpty()) {
       logger.info("A new configuration has been specified");
       config.loadFromMap(newConfig);
+      // clear out any leftover unneeded data
+      if (!config.enableSsl) {
+        config.keystoreFile = null;
+        config.keystorePassword = null;
+        config.truststoreFile = null;
+        config.truststorePassword = null;
+      }
+      if (!config.enableSmtp) {
+        config.smtpHost = null;
+        config.smtpFrom = null;
+        config.smtpUser = null;
+        config.smtpPassword = null;
+      }
       newConfig.clear();
     }
 
@@ -598,10 +674,12 @@ public class WsiteService implements Runnable {
     Path staticDir = resolvePath(Reference.STATIC_DIR);
     logger.info("Copying internal resources...");
     Path staticAssetsDir = resolvePath(Reference.ASSETS_DIR);
-    IOUtils.copyFromResource("css/main.css", staticAssetsDir.resolve("css/main.css"), false);
+    IOUtils.copyFromResource("favicon.ico", staticDir.resolve("favicon.ico"), false);
+    IOUtils.copyFromResource("css/wsite.css", staticAssetsDir.resolve("css/wsite.css"), false);
     IOUtils.copyFromResource("css/normalize.css", staticAssetsDir.resolve("css/normalize.css"), false);
     IOUtils.copyFromResource("scripts/wsite.js", staticAssetsDir.resolve("scripts/wsite.js"), false);
     IOUtils.copyFromResource("scripts/cookies.min.js", staticAssetsDir.resolve("scripts/cookies.min.js"), false);
+    IOUtils.touch(staticAssetsDir.resolve("css/main.css"));
 
     logger.info("Configuring Spark service...");
     IOUtils.mkdirs(staticDir);
@@ -621,22 +699,28 @@ public class WsiteService implements Runnable {
     Spark.notFound(Routes.generateHaltBody(this, 404));
     Spark.internalServerError(Routes.generateHaltBody(this, 500));
     Routes.UserFilter userFilter = new Routes.UserFilter(this);
+    Spark.before("/control", userFilter);
     Spark.before("/control/*", userFilter);
     Spark.before("/profile/*", userFilter);
-    Spark.get("/control/shutdown", new Routes.ShutdownRoute(this));
+    Spark.get("/control/shutdown", Routes.getTemplatedRoute(this, "shutdown.ftlh",
+        !Reference.usingDevBuild()));
+    Spark.post("/control/shutdown", new Routes.ShutdownRoute(this));
     Spark.get("/control/restart", new Routes.RestartRoute(this));
     Spark.get("/login", Routes.getTemplatedRoute(this, "login.ftlh", false));
     Spark.post("/login", new Routes.LoginPostRoute(this));
     Spark.get("/logout", new Routes.LogoutGetRoute(this));
-    Spark.post("/control/config", new Routes.ConfigPostRoute(this));
 
     if (getNumberOfUsers() > 0) {
       logger.info("Adding API routes...");
       Spark.get("/api/asset/fetch", new ApiRoutes.GetAssetRoute(this));
+      Spark.get("/api/asset/exists", new ApiRoutes.AssetExistsRoute(this));
       Spark.post("/api/asset/upload", new ApiRoutes.UploadAssetRoute(this));
       Spark.post("/api/asset/edit", new ApiRoutes.EditAssetRoute(this));
       Spark.post("/api/asset/delete", new ApiRoutes.DeleteAssetRoute(this));
+      Spark.post("/api/asset/reload", new ApiRoutes.ReloadProtectedAssetsRoute(this));
+      Spark.get("/api/asset/list", new ApiRoutes.ListAssetsRoute(this));
       Spark.get("/api/user/fetch", new ApiRoutes.UserGetRoute(this));
+      Spark.get("/api/user/list", new ApiRoutes.ListUsersRoute(this));
       Spark.post("/api/user/create", new ApiRoutes.UserCreateRoute(this));
       Spark.post("/api/user/updateUsername", new ApiRoutes.UserUpdateUsernameRoute(this));
       Spark.post("/api/user/updateEmail", new ApiRoutes.UserUpdateEmailAddressRoute(this));
@@ -644,11 +728,14 @@ public class WsiteService implements Runnable {
       Spark.post("/api/user/updateOperator", new ApiRoutes.UserUpdateOperatorRoute(this));
       Spark.post("/api/user/delete", new ApiRoutes.UserDeleteRoute(this));
       Spark.get("/api/user/exists", new ApiRoutes.UserExistsRoute(this));
+      Spark.get("/api/user/count", new ApiRoutes.UserCountRoute(this));
       Spark.get("/api/page/exists", new ApiRoutes.PageExistsRoute(this));
       Spark.get("/api/page/fetch", new ApiRoutes.PageGetRoute(this));
       Spark.post("/api/page/create", new ApiRoutes.PageCreateRoute(this));
       Spark.post("/api/page/update", new ApiRoutes.PageUpdateRoute(this));
       Spark.post("/api/page/delete", new ApiRoutes.PageDeleteRoute(this));
+      Spark.get("/api/page/list", new ApiRoutes.PageListRoute(this));
+      Spark.get("/api/page/count", new ApiRoutes.PageCountRoute(this));
       Spark.post("/api/login/create", new ApiRoutes.LoginCreateRoute(this));
       Spark.post("/api/login/delete", new ApiRoutes.LoginDeleteRoute(this));
       Spark.get("/api/config/fetch", new ApiRoutes.ConfigGetRoute(this));
@@ -662,27 +749,26 @@ public class WsiteService implements Runnable {
       Spark.post("/control/editAsset", new Routes.EditAssetPostRoute(this));
       Spark.get("/control/deleteAsset", Routes.getTemplatedRoute(this, "deleteAsset.ftlh", true));
       Spark.post("/control/deleteAsset", new Routes.DeleteAssetPostRoute(this));
+      Spark.get("/control/listAssets", Routes.getTemplatedRoute(this, "listAssets.ftlh", true));
       Spark.get("/control/createPage", Routes.getTemplatedRoute(this, "createPage.ftlh", true));
       Spark.post("/control/createPage", new Routes.NewPagePostRoute(this));
       Spark.get("/control/editPage", Routes.getTemplatedRoute(this, "editPage.ftlh", true));
       Spark.post("/control/editPage", new Routes.EditPagePostRoute(this));
       Spark.get("/control/deletePage", Routes.getTemplatedRoute(this, "deletePage.ftlh", true));
       Spark.post("/control/deletePage", new Routes.DeletePagePostRoute(this));
+      Spark.get("/control/listPages", Routes.getTemplatedRoute(this, "listPages.ftlh", true));
       Spark.get("/control/createUser", Routes.getTemplatedRoute(this, "createUser.ftlh", true));
       Spark.post("/control/createUser", new Routes.NewUserPostRoute(this));
-      Spark.get("/profile/edit", Routes.getTemplatedRoute(this, "editSelf.ftlh", false));
-      Spark.post("/control/editSelfUsername", new Routes.EditUserUsernamePostRoute(this));
-      Spark.post("/control/editSelfEmail", new Routes.EditUserEmailPostRoute(this));
-      Spark.post("/control/editSelfPassword", new Routes.EditUserPasswordRoute(this));
+      Spark.get("/profile/edit", new Routes.EditSelfGetRoute(this));
+      Spark.post("/profile/edit", new Routes.EditSelfPostRoute(this));
       Spark.get("/control/editUser", Routes.getTemplatedRoute(this, "editUser.ftlh", true));
       Spark.post("/control/editUser", new Routes.EditUserRoute(this));
       Spark.get("/control/deleteUser", Routes.getTemplatedRoute(this, "deleteUser.ftlh", true));
       Spark.post("/control/deleteUser", new Routes.DeleteUserPostRoute(this));
-      Spark.get("/control/configSite", new Routes.ConfigGetRoute(this, "site"));
-      Spark.get("/control/configDatabase", new Routes.ConfigGetRoute(this, "database"));
-      Spark.get("/control/configSsl", new Routes.ConfigGetRoute(this, "ssl"));
-      Spark.get("/control/configSmtp", new Routes.ConfigGetRoute(this, "smtp"));
-      Spark.get("/veryimportant/teapot", new Routes.TeapotRoute(this));
+      Spark.get("/control/listUsers", Routes.getTemplatedRoute(this, "listUsers.ftlh", true));
+      Spark.post("/control/config", new Routes.ConfigPostRoute(this));
+      Spark.get("/control/config", new Routes.ConfigGetRoute(this));
+      Spark.get("/control", Routes.getTemplatedRoute(this, "control.ftlh", true));
       Spark.get("/", new Routes.IndexPageRoute(this, config.indexPage));
       Spark.get("/*", new Routes.PageGetRoute(this));
     } else {
@@ -745,7 +831,6 @@ public class WsiteService implements Runnable {
       conn.close();
       conn = null;
       dslContext = null;
-      // TODO: Maybe give an option to drop the databases when destroying?
       userRepo = null;
       pageRepo = null;
       loginRepo = null;
@@ -888,7 +973,9 @@ public class WsiteService implements Runnable {
         templateEngine = new FreeMarkerEngine(freemarkerConfig);
       }
       if (protectedAssets.isEmpty()) {
-        addProtectedAssets("css/normalize.css", "scripts/wsite.js", "scripts/cookies.min.js");
+        addProtectedAssets("css/normalize.css", "css/wsite.css", "scripts/wsite.js",
+            "scripts/cookies.min.js"
+        );
       }
 
       WsiteService service = new WsiteService();

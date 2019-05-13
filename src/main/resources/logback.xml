@@ -7,11 +7,18 @@
       <Pattern>${encoderPattern}</Pattern>
     </encoder>
   </appender>
-  <appender name="FILE" class="ch.qos.logback.core.FileAppender">
+  <appender name="FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+    <file>${wsite.rootDirectory}/logs/${ts}.log</file>
+    <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
+      <!-- daily rollover -->
+      <fileNamePattern>${wsite.rootDirectory}/logs/%d{yyyy-MM-dd}.log</fileNamePattern>
+      <!-- keep 30 days' worth of history capped at 3GB total size -->
+      <maxHistory>30</maxHistory>
+      <totalSizeCap>3GB</totalSizeCap>
+    </rollingPolicy>
     <encoder class="ch.qos.logback.classic.encoder.PatternLayoutEncoder">
       <Pattern>${encoderPattern}</Pattern>
     </encoder>
-    <file>${wsite.rootDirectory}/logs/${ts}.log</file>
   </appender>
   <appender name="VIEWLOG" class="me.whizvox.wsite.core.WsiteLogbackAppender">
     <encoder class="ch.qos.logback.classic.encoder.PatternLayoutEncoder">

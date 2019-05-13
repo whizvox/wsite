@@ -1,3 +1,15 @@
+1.2.0-alpha-6
+- A control panel route has been added at /control
+- Users, pages, and assets can be viewed as a list of such
+- Added some new API routes
+- Groups of configuration settings have been merged into a single manageable page
+- SSL and SMTP settings are hidden until their functionality is implemented
+- Assets can be uploaded to the static root directory (i.e. favicon.ico)
+- A default favicon.ico is provided
+- The shutdown route is preceded with a confirmation form
+- Log files are broken up every 30 days and capped at 3 GB
+- main.css renamed to wsite.css and considered a protected asset
+
 1.1.2-alpha-5
 - Logging now done with Logback instead of slf4j-simplelogger
 - A real-time log can be viewed via /control/console

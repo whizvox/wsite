@@ -111,4 +111,16 @@ public class IOUtils {
     Files.write(output, str.getBytes(StandardCharsets.UTF_8));
   }
 
+  public static void cleanupEmptyDirectories(Path root) throws IOException {
+    Files.walkFileTree(root, new SimpleFileVisitor<Path>() {
+      @Override
+      public FileVisitResult postVisitDirectory(Path dir, IOException exc) throws IOException {
+        if (Files.list(dir).count() == 0) {
+          Files.delete(dir);
+        }
+        return FileVisitResult.CONTINUE;
+      }
+    });
+  }
+
 }

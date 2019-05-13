@@ -1,7 +1,7 @@
 <#include "macros.ftlh">
 <@htmlBase "Configure site" siteName>
-<form id="configSite" method="post" action="/control/config">
-  <@siteConfigFormBase config />
+<form id="config" method="post" enctype="multipart/form-data">
+  <@configFormBase config />
   <input type="submit">
 </form>
 </@htmlBase>

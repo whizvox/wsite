@@ -4,6 +4,8 @@ import me.whizvox.wsite.generated.tables.Users;
 import me.whizvox.wsite.generated.tables.records.UsersRecord;
 import me.whizvox.wsite.util.Utils;
 import org.jooq.DSLContext;
+import org.jooq.Field;
+import org.jooq.OrderField;
 import org.jooq.Result;
 
 import java.sql.Timestamp;
@@ -66,6 +68,15 @@ public class UserRepository extends JooqRepository<Users> {
     return PARSER.fromRecords(records);
   }
 
+  public List<User> selectAll(int limit, int page, OrderingScheme orderingScheme, boolean descending) {
+    Result<UsersRecord> records = jooq.selectFrom(table)
+        .orderBy(descending ? orderingScheme.descFields : orderingScheme.ascFields)
+        .limit(limit)
+        .offset(limit * page)
+        .fetch();
+    return PARSER.fromRecords(records);
+  }
+
   public int selectNumberOfUsers() {
     return jooq.fetchCount(table);
   }
@@ -94,5 +105,33 @@ public class UserRepository extends JooqRepository<Users> {
           Timestamp.from(user.whenCreated));
     }
   };
+
+  public enum OrderingScheme {
+    USERNAME(Users.USERS.USERNAME),
+    EMAIL(Users.USERS.EMAIL_ADDRESS),
+    OPERATOR(Users.USERS.OPERATOR, Users.USERS.USERNAME),
+    WHEN_CREATED(Users.USERS.WHEN_CREATED, Users.USERS.USERNAME);
+
+    public OrderField[] ascFields;
+    public OrderField[] descFields;
+    OrderingScheme(Field... fields) {
+      this.ascFields = fields;
+      descFields = new OrderField[fields.length];
+      descFields[0] = fields[0].desc();
+      if (fields.length > 1) {
+        System.arraycopy(fields, 1, descFields, 1, fields.length - 1);
+      }
+    }
+
+    public static OrderingScheme fromString(String str) {
+      for (OrderingScheme value : values()) {
+        if (value.toString().equalsIgnoreCase(str)) {
+          return value;
+        }
+      }
+      return null;
+    }
+
+  }
 
 }

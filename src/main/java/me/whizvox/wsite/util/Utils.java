@@ -69,7 +69,7 @@ public class Utils {
 
   private static final DateTimeFormatter DATE_FORMAT_FILE_SAFE = DateTimeFormatter.ofPattern("yyyyMMdd-kkmmss");
 
-  public static String formatFileSafeString(Instant instant) {
+  public static String formatFileSafeInstant(Instant instant) {
     return LocalDateTime.from(instant.atOffset(ZoneOffset.UTC)).format(DATE_FORMAT_FILE_SAFE);
   }
 

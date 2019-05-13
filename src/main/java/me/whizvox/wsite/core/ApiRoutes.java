@@ -1,7 +1,9 @@
 package me.whizvox.wsite.core;
 
 import me.whizvox.wsite.database.Page;
+import me.whizvox.wsite.database.PageRepository;
 import me.whizvox.wsite.database.User;
+import me.whizvox.wsite.database.UserRepository;
 import me.whizvox.wsite.util.*;
 import spark.*;
 
@@ -15,10 +17,7 @@ import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.Base64;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.UUID;
+import java.util.*;
 import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
 
@@ -68,7 +67,7 @@ public class ApiRoutes {
 
   private static Object formResult(WsiteResult result) {
     if (result == WsiteResult.SUCCESS) {
-      return JsonUtils.toJson(new GenericResult(true, result.toString()));
+      return new GenericResult(true, result.toString());
     }
     haltInvalidRequest(result);
     return null;
@@ -316,6 +315,44 @@ public class ApiRoutes {
     }
   }
 
+  public static class PageListRoute extends WsiteApiRoute {
+    public PageListRoute(WsiteService wsite) {
+      super(wsite);
+    }
+    @Override
+    protected Object handle_do(Request request, Response response, WsiteService wsite) throws Exception {
+      checkPermission(wsite, request);
+      QueryParamsMap params = request.queryMap();
+      int limit = HttpUtils.getInt(params, "limit");
+      int page = HttpUtils.getInt(params, "page");
+      String orderingSchemeStr = HttpUtils.getString(params, "order", "path");
+      boolean descending = HttpUtils.getBool(params, "desc", false);
+      PageRepository.OrderingScheme orderingScheme = PageRepository.OrderingScheme.fromString(orderingSchemeStr);
+      if (orderingScheme == null) {
+        orderingScheme = PageRepository.OrderingScheme.PATH;
+      }
+      return wsite.listPages(limit, page, orderingScheme, descending);
+    }
+  }
+
+  public static class PageCountRoute extends WsiteApiRoute {
+    public static class PageCount {
+      public int count;
+      public PageCount(int count) {
+        this.count = count;
+      }
+      public PageCount() {
+      }
+    }
+    public PageCountRoute(WsiteService wsite) {
+      super(wsite);
+    }
+    @Override
+    protected Object handle_do(Request request, Response response, WsiteService wsite) throws Exception {
+      return new PageCount(wsite.getPageCount());
+    }
+  }
+
   public static class PageDeleteRoute extends WsiteApiRoute {
     public static WsiteResult deletePage(WsiteService wsite, Request request, String pathField) {
       String path = HttpUtils.getString(request.queryMap(), pathField);
@@ -452,6 +489,71 @@ public class ApiRoutes {
     }
   }
 
+  public static class ListUsersRoute extends WsiteApiRoute {
+    public static class UserInfo {
+      public String id;
+      public String username;
+      public String email;
+      public String created;
+      public boolean operator;
+      public UserInfo(String id, String username, String email, String created, boolean operator) {
+        this.id = id;
+        this.username = username;
+        this.email = email;
+        this.created = created;
+        this.operator = operator;
+      }
+      public UserInfo() {
+      }
+    }
+    public ListUsersRoute(WsiteService wsite) {
+      super(wsite);
+    }
+    @Override
+    protected Object handle_do(Request request, Response response, WsiteService wsite) throws Exception {
+      checkPermission(wsite, request);
+      QueryParamsMap params = request.queryMap();
+      int limit = HttpUtils.getInt(params, "limit", 20);
+      int page = HttpUtils.getInt(params, "page", 0);
+      String orderingSchemeStr = HttpUtils.getString(params, "order", "username");
+      boolean descending = HttpUtils.getBool(params, "desc", false);
+      if (limit < 0) {
+        limit = 0;
+      }
+      if (page < 0) {
+        page = 0;
+      }
+      UserRepository.OrderingScheme orderingScheme = UserRepository.OrderingScheme.fromString(orderingSchemeStr);
+      if (orderingScheme == null) {
+        orderingScheme = UserRepository.OrderingScheme.USERNAME;
+      }
+      List<User> users = wsite.getUsers(limit, page, orderingScheme, descending);
+      List<UserInfo> userInfos = new ArrayList<>(users.size());
+      users.forEach(user -> userInfos.add(new UserInfo(user.id.toString(), user.username, user.emailAddress,
+          Utils.formatFileSafeInstant(user.whenCreated), user.operator))
+      );
+      return userInfos;
+    }
+  }
+
+  public static class UserCountRoute extends WsiteApiRoute {
+    public static class UserCount {
+      public int count;
+      public UserCount(int count) {
+        this.count = count;
+      }
+      public UserCount() {
+      }
+    }
+    public UserCountRoute(WsiteService wsite) {
+      super(wsite);
+    }
+    @Override
+    protected Object handle_do(Request request, Response response, WsiteService wsite) throws Exception {
+      return new UserCount(wsite.getNumberOfUsers());
+    }
+  }
+
   public static class LoginCreateRoute extends WsiteApiRoute {
     public static Pair<WsiteResult, String> createLogin(WsiteService wsite, Request request, String queryField, String passwordField, String rememberField) {
       QueryParamsMap params = request.queryMap();
@@ -507,6 +609,7 @@ public class ApiRoutes {
       boolean encoded = HttpUtils.getBool(params, "encoded");
       String encoding = HttpUtils.getString(params, "encoding");
       boolean replace = HttpUtils.getBool(params, "replace");
+      boolean toRoot = HttpUtils.getBool(params, "root");
       ByteArrayInputStream in;
       if (contentsStr != null) {
         if (encoded) {
@@ -523,7 +626,7 @@ public class ApiRoutes {
       } else {
         in = null;
       }
-      return wsite.uploadAsset(path, in, replace);
+      return wsite.uploadAsset(path, in, replace, toRoot);
     }
   }
 
@@ -535,10 +638,15 @@ public class ApiRoutes {
     protected Object handle_do(Request request, Response response, WsiteService wsite) throws Exception {
       checkPermission(wsite, request);
       QueryParamsMap params = request.queryMap();
-      String origPath = HttpUtils.getString(params, "origPath");
       String path = HttpUtils.getString(params, "path");
+      boolean root = HttpUtils.getBool(params, "root", false);
+      String newPath = HttpUtils.getString(params, "newPath", null);
+      boolean newRoot = HttpUtils.getBool(params, "newRoot", false);
       byte[] contents = HttpUtils.getBase64EncodedBytes(params, "contents");
-      return wsite.editAsset(origPath == null ? path : origPath, path, contents);
+      if (contents == null) {
+        contents = new byte[0];
+      }
+      return wsite.editAsset(path, root, newPath, newRoot, contents);
     }
   }
 
@@ -549,8 +657,10 @@ public class ApiRoutes {
     @Override
     protected Object handle_do(Request request, Response response, WsiteService wsite) throws IOException {
       checkPermission(wsite, request);
-      String path = HttpUtils.getString(request.queryMap(), "path");
-      return wsite.deleteAsset(path);
+      QueryParamsMap params = request.queryMap();
+      String path = HttpUtils.getString(params, "path");
+      boolean root = HttpUtils.getBool(params, "root", false);
+      return wsite.deleteAsset(path, root);
     }
   }
 
@@ -572,17 +682,56 @@ public class ApiRoutes {
     protected Object handle_do(Request request, Response response, WsiteService wsite) throws Exception {
       QueryParamsMap params = request.queryMap();
       String path = HttpUtils.getString(params, "path");
+      boolean root = HttpUtils.getBool(params, "root", false);
       if (path == null) {
         haltInvalidRequest(WsiteResult.ASSET_NO_PATH);
       }
-      try (InputStream in = wsite.getAssetStream(path)) {
+      try (InputStream in = wsite.getAssetStream(path, root)) {
         if (in != null) {
           byte[] contents = IOUtils.readBytesFromStream(in);
-          return new Asset(path, Base64.getEncoder().encodeToString(contents));
+          Path assetPath = wsite.toLocalPath(wsite.getAssetPath(path, root));
+          return new Asset(assetPath.subpath(1, assetPath.getNameCount()).toString(), Base64.getEncoder().encodeToString(contents));
         }
       }
       haltInvalidRequest(WsiteResult.ASSET_PATH_NOT_FOUND);
       return null;
+    }
+  }
+
+  public static class AssetExistsRoute extends WsiteApiRoute {
+    public AssetExistsRoute(WsiteService wsite) {
+      super(wsite);
+    }
+    @Override
+    protected Object handle_do(Request request, Response response, WsiteService wsite) throws Exception {
+      QueryParamsMap params = request.queryMap();
+      String path = HttpUtils.getString(params, "path");
+      boolean root = HttpUtils.getBool(params, "root");
+      boolean exists = wsite.doesAssetExist(path, root);
+      return Collections.singletonMap("exists", exists);
+    }
+  }
+
+  public static class ListAssetsRoute extends WsiteApiRoute {
+    public ListAssetsRoute(WsiteService wsite) {
+      super(wsite);
+    }
+    @Override
+    protected Object handle_do(Request request, Response response, WsiteService wsite) throws Exception {
+      checkPermission(wsite, request);
+      return wsite.listAssets(); // TODO: Implement a limit and page system
+    }
+  }
+
+  public static class ReloadProtectedAssetsRoute extends WsiteApiRoute {
+    public ReloadProtectedAssetsRoute(WsiteService wsite) {
+      super(wsite);
+    }
+    @Override
+    protected Object handle_do(Request request, Response response, WsiteService wsite) throws Exception {
+      checkPermission(wsite, request);
+      wsite.reloadProtectedAssets();
+      return formResult(WsiteResult.SUCCESS);
     }
   }
 
@@ -634,7 +783,7 @@ public class ApiRoutes {
     protected Object handle_do(Request request, Response response, WsiteService wsite) {
       checkPermission(wsite, request);
       String filter = HttpUtils.getString(request.queryMap(), "filter", "all").toLowerCase();
-      return wsite.getConfigValues(filter);
+      return wsite.getConfigValues();
     }
   }
 

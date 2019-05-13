@@ -2,12 +2,25 @@ function $(id) {
   return document.getElementById(id);
 }
 
+function formatBytesSize(num) {
+  if (num < 1000) {
+    return num.toString() + " B";
+  }
+  if (num < 1000000) {
+    return (num / 1000).toFixed(1).toString() + " KB";
+  }
+  if (num < 1000000000) {
+    return (num / 1000000).toFixed(1).toString() + " MB";
+  }
+  return (num / 1000000000).toFixed(1).toString() + " GB";
+}
+
 function goto(url) {
   window.location.href = url;
 }
 
 function getSubmitButton() {
-  var elements = document.querySelectorAll("[type=submit]");
+  let elements = document.querySelectorAll("[type=submit]");
   return elements[0];
 }
 
@@ -16,7 +29,7 @@ function scrollToBottom(e) {
 }
 
 function insertTextAndAutoScroll(e, text) {
-  var isScrolledToBottom = e.scrollHeight - e.clientHeight <= e.scrollTop + 1;
+  let isScrolledToBottom = e.scrollHeight - e.clientHeight <= e.scrollTop + 1;
   e.insertAdjacentHTML("beforeend", text);
   if (isScrolledToBottom) {
     scrollToBottom(e);
@@ -24,7 +37,7 @@ function insertTextAndAutoScroll(e, text) {
 }
 
 function toggleSubmit(d) {
-  var submitBtn = getSubmitButton();
+  let submitBtn = getSubmitButton();
   submitBtn.disabled = d;
 }
 
@@ -32,65 +45,92 @@ function displayError(msg) {
   alert("Error: " + msg);
 }
 
-function handleAsyncJsonRequest(location, formData, callback, method) {
-  var req = new XMLHttpRequest();
-  if (typeof(method) === "undefined") {
+function deleteTableRows(table) {
+  while (table.rows.length > 1) {
+    table.deleteRow(1);
+  }
+}
+
+function deleteAllChildNodes(e) {
+  let child = e.lastElementChild;
+  while (child) {
+    e.removeChild(child);
+    child = e.lastElementChild;
+  }
+}
+
+function encodeMap(map) {
+  if (map === null) {
+    return "";
+  }
+  let body = "";
+  for (let entry of map.entries()) {
+    body += encodeURIComponent(entry[0]) + "=" + encodeURIComponent(entry[1]) + "&";
+  }
+  return body;
+}
+
+function addLoginToken(map) {
+  map.set("token", Cookies.get("login"));
+}
+
+function handleAsyncJsonRequest(location, body, callback, method, contentType) {
+  let req = new XMLHttpRequest();
+  if (method === undefined) {
     method = "get";
   }
-  var getRequest = method.toLowerCase() === "get";
-  // GET requests require that arguments be passed via the URL instead of the body
-  if (getRequest) {
-    location += "?";
-    var i = 0;
-    for (var entry of formData.entries()) {
-      if (i > 0) {
-        location += "&";
-      }
-      location += encodeURIComponent(entry[0]) + "=" + encodeURIComponent(entry[1]);
-      i++;
-    }
+  if (contentType === undefined) {
+    contentType = "application/x-www-form-urlencoded";
   }
-  req.open(method, location, true);
+  let emptyBody = method.toLowerCase() === "get" || method.toLowerCase() === "head";
+  // GET and HEAD requests require that arguments be passed via the URL instead of the body
+  if (emptyBody && body !== null) {
+    location += "?" + body;
+  }
+  req.open(method, location);
+  req.setRequestHeader("Content-Type", contentType);
   req.onreadystatechange = function() {
-    if (req.readyState === 4) {
-      var contentType = req.getResponseHeader("Content-Type");
+    if (this.readyState === XMLHttpRequest.DONE) {
+      let contentType = req.getResponseHeader("Content-Type");
       if (contentType !== "application/json") {
-        console.log("ERROR: Expected a JSON result, got " + contentType + " instead\n" + req.responseText);
+        console.log("ERROR: Expected a JSON result, got " + contentType + " instead\n" + this.responseText);
       } else {
-        callback(JSON.parse(req.responseText));
+        callback(JSON.parse(this.responseText));
       }
     }
   };
-  if (getRequest) {
+  if (emptyBody) {
     req.send(null);
   } else {
-    req.send(formData);
+    req.send(body);
   }
 }
 
 function confirmUserEmail() {
-  var eEmail = $("userEmail");
-  var eEmailConfirm = $("userConfirmEmail");
+  let eEmail = $("userEmail");
+  let eEmailConfirm = $("userConfirmEmail");
   if (eEmail.value !== eEmailConfirm.value) {
     eEmailConfirm.setCustomValidity("Email addresses must match");
   } else {
     eEmailConfirm.setCustomValidity("");
   }
 }
+
 function confirmUserPassword() {
-  var ePassword = $("userPassword");
-  var ePasswordConfirm = $("userConfirmPassword");
+  let ePassword = $("userPassword");
+  let ePasswordConfirm = $("userConfirmPassword");
   if (ePassword.value !== ePasswordConfirm.value) {
     ePasswordConfirm.setCustomValidity("Passwords must match");
   } else {
     ePasswordConfirm.setCustomValidity("");
   }
 }
+
 function checkUsernameAvailable() {
-  var eUsername = $("userUsername");
-  var data = new FormData();
-  data.append("username", eUsername.value);
-  handleAsyncJsonRequest("/api/user/exists", data, function(res) {
+  let eUsername = $("userUsername");
+  let args = new Map();
+  args.set("username", eUsername.value);
+  handleAsyncJsonRequest("/api/user/exists", encodeMap(args), function(res) {
     if (res.success) {
       if (!res.exists) {
         eUsername.setCustomValidity("");
@@ -98,16 +138,16 @@ function checkUsernameAvailable() {
         eUsername.setCustomValidity("That username is already taken!");
       }
     } else {
-      // TODO: Think of a better way to handle server-side errors
       displayError(res.message);
     }
   });
 }
+
 function checkEmailAvailable() {
-  var eEmail = $("userEmail");
-  var data = new FormData();
-  data.append("email", eEmail.value);
-  handleAsyncJsonRequest("/api/user/exists", data, function(res) {
+  let eEmail = $("userEmail");
+  let args = new Map();
+  args.set("email", eEmail.value);
+  handleAsyncJsonRequest("/api/user/exists", encodeMap(args), function(res) {
     if (res.success) {
       if (!res.exists) {
         eEmail.setCustomValidity("");
@@ -121,10 +161,10 @@ function checkEmailAvailable() {
 }
 
 function checkPathAvailable(validIfExists) {
-  var ePath = $("path");
-  var data = new FormData();
-  data.append("path", ePath.value);
-  handleAsyncJsonRequest("/api/page/exists", data, function(res) {
+  let ePath = $("path");
+  let args = new Map();
+  args.set("path", ePath.value);
+  handleAsyncJsonRequest("/api/page/exists", encodeMap(args), function(res) {
     if (res.success) {
       if (validIfExists) {
         if (res.exists) {
@@ -140,21 +180,37 @@ function checkPathAvailable(validIfExists) {
         }
       }
     } else {
-      displayError("Error: " + res.message)
+      displayError(res.message)
     }
   });
 }
 
+function checkEnableSsl() {
+  let enableSsl = $("enableSsl").checked;
+  $("keystoreFile").disabled = !enableSsl;
+  $("keystorePassword").disabled = !enableSsl;
+  $("truststoreFile").disabled = !enableSsl;
+  $("truststorePassword").disabled = !enableSsl;
+}
+
+function checkEnableSmtp() {
+  let enableSmtp = $("enableSmtp").checked;
+  $("smtpHost").disabled = !enableSmtp;
+  $("smtpFrom").disabled = !enableSmtp;
+  $("smtpUser").disabled = !enableSmtp;
+  $("smtpPassword").disabled = !enableSmtp;
+}
+
 function updatePageInfo() {
-  var eOrigPath = $("origPath");
-  var data = new FormData();
-  data.append("path", eOrigPath.value);
-  handleAsyncJsonRequest("/api/page/fetch", data, function(res) {
+  let eOrigPath = $("origPath");
+  let args = new Map();
+  args.set("path", eOrigPath.value);
+  handleAsyncJsonRequest("/api/page/fetch", encodeMap(args), function(res) {
     if (!res.hasOwnProperty("success")) {
-      var ePath = $("path");
-      var eTitle = $("title");
-      var eContents = $("contents");
-      var eSyntax = $("syntax");
+      let ePath = $("path");
+      let eTitle = $("title");
+      let eContents = $("contents");
+      let eSyntax = $("syntax");
       ePath.value = res.path;
       eTitle.value = res.title;
       eContents.value = atob(res.contents);
@@ -165,30 +221,30 @@ function updatePageInfo() {
         eOrigPath.setCustomValidity("Path does not exist");
       } else {
         eOrigPath.setCustomValidity("");
-        displayError("Error: " + res.message);
+        displayError(res.message);
       }
     }
   });
 }
 
 function updateUserInfo() {
-  var eId = $("userId");
-  var eUsername = $("userUsername");
-  var eEmail = $("userEmail");
-  var willFillIn = true;
-  var data = new FormData();
+  let eId = $("userId");
+  let eUsername = $("userUsername");
+  let eEmail = $("userEmail");
+  let willFillIn = true;
+  let args = new Map();
   if (eId.value !== "") {
-    data.append("id", eId.value);
+    args.set("id", eId.value);
   } else if (eUsername.value !== "") {
-    data.append("username", eUsername.value);
+    args.set("username", eUsername.value);
   } else if (eEmail.value !== "") {
-    data.append("email", eEmail.value);
+    args.set("email", eEmail.value);
   } else {
     willFillIn = false;
   }
-  data.append("token", Cookies.get("login"));
+  addLoginToken(args);
   if (willFillIn) {
-    handleAsyncJsonRequest("/api/user/fetch", data, function(res) {
+    handleAsyncJsonRequest("/api/user/fetch", encodeMap(args), function(res) {
       if (!res.hasOwnProperty("success")) {
         eId.value = res.id;
         eUsername.value = res.username;
@@ -213,17 +269,255 @@ function updateUserInfo() {
 }
 
 function updateAssetInfo() {
-  var eOrigPath = $("origPath");
-  var data = new FormData();
-  data.append("path", eOrigPath.value);
-  handleAsyncJsonRequest("/api/asset/fetch", data, function(res) {
+  let args = new Map();
+  args.set("path", $("path").value);
+  args.set("root", $("root").checked);
+  handleAsyncJsonRequest("/api/asset/fetch", encodeMap(args), function(res) {
     if (!res.hasOwnProperty("success")) {
-      var ePath = $("path");
-      var eContents = $("contents");
-      ePath.value = res.path;
-      eContents.value = atob(res.contents);
+      $("contents").value = atob(res.contents);
     } else {
       displayError(res.message);
     }
   });
+}
+
+function insertPages(pagesElement, currentPage, maxPages, params) {
+  deleteAllChildNodes(pagesElement);
+
+  if (currentPage > 0) {
+    if (currentPage > 1) {
+      let firstPage = document.createElement("a");
+      params.set("page", 0);
+      firstPage.setAttribute("href", window.location.href.split("?")[0] + "?" + params.toString());
+      firstPage.setAttribute("class", "page firstPage");
+      firstPage.appendChild(document.createTextNode(0));
+      pagesElement.appendChild(firstPage);
+    }
+    let prevPage = document.createElement("a");
+    params.set("page", currentPage - 1);
+    prevPage.setAttribute("href", window.location.href.split("?")[0] + "?" + params.toString());
+    prevPage.setAttribute("class", "page prevPage");
+    prevPage.appendChild(document.createTextNode(currentPage - 1));
+    pagesElement.appendChild(prevPage);
+  }
+
+  let currPage = document.createElement("a");
+  params.set("page", currentPage);
+  currPage.setAttribute("href", window.location.href.split("?")[0] + "?" + params.toString());
+  currPage.setAttribute("class", "page currentPage");
+  currPage.appendChild(document.createTextNode(currentPage));
+  pagesElement.appendChild(currPage);
+
+  if (currentPage < maxPages) {
+    let nextPage = document.createElement("a");
+    params.set("page", +currentPage + 1);
+    nextPage.setAttribute("href", window.location.href.split("?")[0] + "?" + params.toString());
+    nextPage.setAttribute("class", "page nextPage");
+    nextPage.appendChild(document.createTextNode(+currentPage + 1));
+    pagesElement.appendChild(nextPage);
+    if (currentPage < maxPages - 1) {
+      let lastPage = document.createElement("a");
+      params.set("page", maxPages);
+      lastPage.setAttribute("href", window.location.href.split("?")[0] + "?" + params.toString());
+      lastPage.setAttribute("class", "page lastPage");
+      lastPage.appendChild(document.createTextNode(maxPages));
+      pagesElement.appendChild(lastPage);
+    }
+  }
+}
+
+function updateUsersList(init) {
+  let params = new URLSearchParams(window.location.search);
+  let limit;
+  let order;
+  let descending;
+  if (!init) {
+    limit = +$("usersListLimit").value;
+    params.set("limit", limit);
+    order = $("usersListOrder").value;
+    params.set("order", order);
+    descending = $("usersListDesc").checked;
+    params.set("desc", descending);
+  } else {
+    limit = 20;
+    if (params.has("limit")) {
+      limit = +params.get("limit");
+    }
+    $("usersListLimit").value = limit;
+    order = "username";
+    if (params.has("order")) {
+      order = params.get("order").toLowerCase();
+    }
+    $("usersListOrder").value = order.toLowerCase();
+    descending = false;
+    if (params.has("desc")) {
+      descending = params.get("desc").toLowerCase() === "true";
+    }
+    $("usersListDesc").checked = descending;
+  }
+  if (limit > 100) {
+    limit = 100;
+  } else if (limit < 5) {
+    limit = 5;
+  }
+  let page = 0;
+  if (params.has("page")) {
+    page = +params.get("page");
+  }
+  let args = new Map();
+  args.set("limit", limit);
+  args.set("page", page);
+  args.set("order", order);
+  args.set("desc", descending);
+  addLoginToken(args);
+  handleAsyncJsonRequest("/api/user/list", encodeMap(args), function(res) {
+    if (res.hasOwnProperty("success")) {
+      displayError("Could not retrieve list of users: " + res.message);
+    } else {
+      let usersList = $("usersList");
+      deleteTableRows(usersList);
+      for (let i = 0; i < res.length; i++) {
+        let user = res[i];
+        let row = usersList.insertRow();
+        row.insertCell().appendChild(document.createTextNode(user.id));
+        row.insertCell().appendChild(document.createTextNode(user.username));
+        row.insertCell().appendChild(document.createTextNode(user.email));
+        row.insertCell().appendChild(document.createTextNode(user.operator));
+        row.insertCell().appendChild(document.createTextNode(user.created));
+      }
+    }
+  });
+  handleAsyncJsonRequest("/api/user/count", null, function(res) {
+    if (res.hasOwnProperty("success")) {
+      displayError("Count not retrieve count of users: " + res.message);
+    } else {
+      let pages = $("pages");
+      let count = res.count;
+      let maxPages = Math.floor(count / limit);
+      insertPages(pages, page, maxPages, params);
+    }
+  });
+}
+
+function updatePagesList(init) {
+  let params = new URLSearchParams(window.location.search);
+  let limit;
+  let order;
+  let descending;
+  if (!init) {
+    limit = +$("listPagesLimit").value;
+    params.set("limit", limit);
+    order = $("listPagesOrder").value;
+    params.set("order", order);
+    descending = $("listPagesDesc").checked;
+    params.set("desc", descending);
+  } else {
+    limit = 20;
+    if (params.has("limit")) {
+      limit = +params.get("limit");
+    }
+    $("listPagesLimit").value = limit;
+    order = "path";
+    if (params.has("order")) {
+      order = params.get("order");
+    }
+    $("listPagesOrder").value = order;
+    descending = false;
+    if (params.has("desc")) {
+      descending = params.get("desc").toLowerCase() === "true";
+    }
+    $("listPagesDesc").checked = descending;
+  }
+  let page = 0;
+  if (params.has("page")) {
+    page = +params.get("page");
+  }
+
+  let args = new Map();
+  args.set("limit", limit);
+  args.set("order", order);
+  args.set("desc", descending);
+  args.set("page", page);
+  addLoginToken(args);
+  handleAsyncJsonRequest("/api/page/list", encodeMap(args), function(res) {
+    if (res.hasOwnProperty("success")) {
+      displayError(res.message);
+    } else {
+      let pagesList = $("pagesList");
+      deleteTableRows(pagesList);
+      for (let i = 0; i < res.length; i++) {
+        let page = res[i];
+        let row = pagesList.insertRow();
+        row.insertCell().appendChild(document.createTextNode(page.path));
+        row.insertCell().appendChild(document.createTextNode(page.title));
+        row.insertCell().appendChild(document.createTextNode(page.contentLength));
+        row.insertCell().appendChild(document.createTextNode(page.syntax));
+        row.insertCell().appendChild(document.createTextNode(page.published));
+        let lastEditedNode;
+        if (page.lastEdited === null) {
+          lastEditedNode = document.createElement("span");
+          lastEditedNode.setAttribute("class", "nullValue");
+        } else {
+          lastEditedNode = document.createTextNode(page.lastEdited);
+        }
+        row.insertCell().appendChild(lastEditedNode);
+      }
+    }
+  });
+  handleAsyncJsonRequest("/api/page/count", null, function(res) {
+    if (res.hasOwnProperty("success")) {
+      displayError("Could not retrieve page count" + res.message);
+    } else {
+      let pages = $("pages");
+      let count = res.count;
+      let maxPages = Math.floor(count / limit);
+      insertPages(pages, page, maxPages, params);
+    }
+  });
+}
+
+function updateAssetsList() {
+  let args = new Map();
+  addLoginToken(args);
+  handleAsyncJsonRequest("/api/asset/list", encodeMap(args), function(res) {
+    if (res.hasOwnProperty("success")) {
+      displayError("Could not retrieve assets list: " + res.message);
+    } else {
+      let assets = $("assetsList");
+      deleteTableRows(assets);
+      for (let i = 0; i < res.length; i++) {
+        let asset = res[i];
+        let row = assets.insertRow();
+        row.insertCell().appendChild(document.createTextNode(asset.path));
+        row.insertCell().appendChild(document.createTextNode(formatBytesSize(+asset.size)));
+        row.insertCell().appendChild(document.createTextNode(asset.protect));
+        let uploadedNode;
+        if (asset.uploaded === null) {
+          uploadedNode = document.createElement("span");
+          uploadedNode.setAttribute("class", "nullValue");
+        } else {
+          uploadedNode = document.createTextNode(asset.uploaded);
+        }
+        row.insertCell().appendChild(uploadedNode);
+        let lastEditedNode;
+        if (asset.lastEdited === null) {
+          lastEditedNode = document.createElement("span");
+          lastEditedNode.setAttribute("class", "nullValue");
+        } else {
+          lastEditedNode = document.createTextNode(asset.lastEdited);
+        }
+        row.insertCell().appendChild(lastEditedNode);
+      }
+    }
+  });
+}
+
+function reloadProtectedAssets() {
+  let args = new Map();
+  addLoginToken(args);
+  handleAsyncJsonRequest("/api/asset/reload", encodeMap(args), function(res) {
+    if (!res.success) {
+      displayError(res.message);
+    }
+  }, "post");
 }

@@ -1,0 +1,50 @@
+#usernamePattern, #passwordPattern, #databaseUrl {
+  font-family: monospace;
+}
+
+#console {
+  height: 80vh;
+  width: 90vw;
+  border: 1px solid #3b3b3b;
+  font-family: monospace;
+  overflow: auto;
+}
+
+.tooltip {
+  border-bottom: 1px dotted black;
+}
+.tooltip .tooltiptext {
+  position: relative;
+  display: inline-block;
+  visibility: hidden;
+}
+.tooltip:hover .tooltiptext {
+  visibility: visible;
+}
+
+#pages .page {
+  padding-left: 5px;
+  padding-right: 5px;
+}
+#pages .firstPage:before {
+  content: "<<";
+}
+
+#pages .prevPage:before {
+  content: "<";
+}
+
+#pages .nextPage:after {
+  content: ">";
+}
+
+#pages .lastPage:after {
+  content: ">>";
+}
+
+.nullValue {
+  color: red;
+}
+.nullValue:after {
+  content: "null";
+}

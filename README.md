@@ -1,14 +1,30 @@
 # Wsite
 
-This is the online source repository of Wsite, a lightweight, fully-customizable, Java-based web server and service.
+This is the online source repository of Wsite, a lightweight and fully-customizable web server and service with a
+Java-powered backend.
+
+## Important disclaimer
+
+In its current state, Wsite is only meant for testing and development-purposes only. Not recommended to
+use in production. That being said, a demo of it is being ran at http://whizvox.me
 
 ## How to run
+
+### Requirements
+
+The following **must** be installed:
+* Java 8 or greater: [Oracle](https://www.oracle.com/technetwork/java/javase/downloads/index.html) /
+[OpenJDK](https://jdk.java.net/)
+
+Optional:
+* [Gradle 4.x](https://gradle.org/)
+* [sqlite3](https://sqlite.org/index.html)
 
 ### Creating an executable Jar
 
 Run `./gradlew shadowJar`. The result will be in `./build/libs/wsite-<version>.jar`
 
-### Via Gradle
+### Run with Gradle
 
 Run `./gradlew run`. The service will use `./rundir` as the working directory.
 
@@ -19,13 +35,4 @@ Run `./gradlew run`. The service will use `./rundir` as the working directory.
 * Submit the form, and the server will restart with the standard routes
 * Login at `/login` (logout at `/logout`)
 * Every route prefixed with `/control` will require an operator to be logged in.
-* Upload / delete assets at `/control/uploadAsset` / `/control/deleteAsset`, publicly accessible at `/assets/<path>`
-* Create / delete pages at `/control/createPage` / `/control/deletePage`
-* Create / delete users at `/control/createUser` / `control/deleteUser` (you can't delete yourself)
-* Configure settings at `/control/configSite` / `/control/configDatabase` / `/control/configSsl` (not used) / 
-`/control/configSmtp` (not used)
-* Edit stuff at `/control/edit<Asset|Page|User>`
-* Edit your own user information at `/profile/edit`
-* Shutdown / restart the server at `/control/shutdown` / `/control/restart`
-
-That's all for now. Come back later for more updates...
+* Goto `/control` to view all available control options

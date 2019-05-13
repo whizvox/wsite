@@ -1,22 +1,7 @@
 <#include "macros.ftlh">
-<@htmlBase "Setup" "Wsite">
+<@htmlBase "Setup" siteName>
 <form id="setup" method="post" enctype="multipart/form-data">
-  <fieldset>
-    <legend>General</legend>
-    <@siteConfigFormBase config />
-  </fieldset>
-  <fieldset>
-    <legend>Database</legend>
-    <@databaseConfigFormBase config />
-  </fieldset>
-  <fieldset>
-    <legend>SSL</legend>
-    <@sslConfigFormBase config />
-  </fieldset>
-  <fieldset>
-    <legend>SMTP</legend>
-    <@smtpConfigFormBase config />
-  </fieldset>
+  <@configFormBase config />
   <fieldset>
     <legend>Initial operator</legend>
     <@userFormBase true />
