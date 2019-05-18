@@ -16,6 +16,8 @@ The following **must** be installed:
 * Java 8 or greater: [Oracle](https://www.oracle.com/technetwork/java/javase/downloads/index.html) /
 [OpenJDK](https://jdk.java.net/)
 
+If you are having any problems building or running, use Java 8, not Java 9+.
+
 Optional:
 * [Gradle 4.x](https://gradle.org/)
 * [sqlite3](https://sqlite.org/index.html)

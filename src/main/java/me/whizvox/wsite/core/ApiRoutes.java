@@ -12,6 +12,7 @@ import javax.servlet.ServletException;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.Buffer;
 import java.nio.CharBuffer;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
@@ -565,7 +566,7 @@ public class ApiRoutes {
       WsiteResult result = wsite.createLogin(
           query, password, minutesUntilExpire, request.userAgent(), request.ip(), tokenBuffer
       );
-      tokenBuffer.rewind();
+      ((Buffer) tokenBuffer).rewind(); // Java 8 compatibility building on Java 9+
       return new Pair<>(result, result != WsiteResult.SUCCESS ? null : tokenBuffer.toString());
     }
     public static Pair<WsiteResult, String> createLogin(WsiteService wsite, Request request) {

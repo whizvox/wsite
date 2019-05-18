@@ -1,3 +1,7 @@
+1.2.1-alpha-7
+- Wsite requires Java 8 in order to build
+- Fixed login creation not working while running Java 8
+
 1.2.0-alpha-6
 - A control panel route has been added at /control
 - Users, pages, and assets can be viewed as a list of such
